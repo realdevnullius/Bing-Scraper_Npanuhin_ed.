@@ -5,23 +5,37 @@ Using **four backticks** forces the interface to render the entire `README.md` i
 ```markdown
 # 🖼️ Bing Wallpaper Archive Pipeline
 
-A robust, cross-region deduplicating downloader pipeline for the global **Bing Image of the Day** archive. Available in both **Single-Threaded (Sequential)** and **Multi-Threaded (Concurrent)** editions.
+A robust, cross-region deduplicating downloader pipeline for the global **Bing Image of the Day**
+ archive. Available in both **Single-Threaded (Sequential)** and **Multi-Threaded (Concurrent)** 
+ editions.
 
-This pipeline syncs manifests across 11 worldwide regional endpoints, performs in-memory deduplication, enforces Ultra HD (4K) image quality, verifies binary payload integrity, and hard-injects Windows Shell-compatible EXIF/IPTC metadata into every asset.
+This pipeline syncs manifests across 11 worldwide regional endpoints, performs in-memory
+ deduplication, enforces Ultra HD (4K) image quality, verifies binary payload integrity, and
+ hard-injects Windows Shell-compatible EXIF/IPTC metadata into every asset.
 
 ---
 
 ## 📸 Key Features
 
-* **🌍 Worldwide Cross-Region Deduplication:** Evaluates regional Bing markets (`US`, `UK`, `DE`, `FR`, `JA`, `AU`, `CN`, `CA`, `IN`, `BR`, `ROW`) in RAM to ensure duplicate global images are downloaded exactly once.
+* **🌍 Worldwide Cross-Region Deduplication:** Evaluates regional Bing markets (`US`, `UK`, `DE`,
+ `FR`, `JA`, `AU`, `CN`, `CA`, `IN`, `BR`, `ROW`) in RAM to ensure duplicate global images are
+ downloaded exactly once.
 * **⚡ Dual Execution Engines:**
-  * **Multi-Threaded Engine:** Uses `ThreadPoolExecutor` TCP multiplexing for speed (5x–15x throughput gains).
-  * **Single-Threaded Engine:** Strict sequential ingestion for connection stability on low-bandwidth networks or strict firewalls.
-* **🎯 Unicode & CJK Script Preservation:** Prevents descriptive international filenames (Chinese, Japanese, Korean, German, etc.) from being overwritten with generic fallback strings.
-* **✨ Automatic 4K Ultra HD Upgrading:** Dynamically rewrites standard high-definition asset URLs to target Ultra HD (`_UHD.jpg`) streams on Bing's CDNs.
-* **🏷️ Windows Explorer Metadata Injection:** Directly writes native `EXIF/IPTC` metadata tags using UTF-16LE Byte Order Mark (BOM) encoding. Windows Explorer reads image titles, descriptions, and copyrights natively in File Explorer properties.
-* **🔄 Flexible Directory Architecture:** Supports both structured `_OUT\YYYY\MM\filename.jpg` output and flat `_OUT\filename.jpg` storage via a simple global toggle.
-* **🖼️ Background Switcher Ready:** Optimized for seamless integration with desktop wallpaper rotation software, such as *John's Background Switcher*.
+  * **Multi-Threaded Engine:** Uses `ThreadPoolExecutor` TCP multiplexing for speed (5x–15x
+  throughput gains).
+  * **Single-Threaded Engine:** Strict sequential ingestion for connection stability on low-bandwidth
+  networks or strict firewalls.
+* **🎯 Unicode & CJK Script Preservation:** Prevents descriptive international filenames (Chinese,
+ Japanese, Korean, German, etc.) from being overwritten with generic fallback strings.
+* **✨ Automatic 4K Ultra HD Upgrading:** Dynamically rewrites standard high-definition asset URLs 
+to target Ultra HD (`_UHD.jpg`) streams on Bing's CDNs.
+* **🏷️ Windows Explorer Metadata Injection:** Directly writes native `EXIF/IPTC` metadata tags using
+ UTF-16LE Byte Order Mark (BOM) encoding. Windows Explorer reads image titles, descriptions, and
+ copyrights natively in File Explorer properties.
+* **🔄 Flexible Directory Architecture:** Supports both structured `_OUT\YYYY\MM\filename.jpg` output
+ and flat `_OUT\filename.jpg` storage via a simple global toggle.
+* **🖼️ Background Switcher Ready:** Optimized for seamless integration with desktop wallpaper 
+rotation software, such as *John's Background Switcher*.
 
 ---
 
@@ -143,10 +157,14 @@ MAX_WORKERS = 6
 ```
 
 * **Manifest Ingestion:** Syncs the central database archive from [bing.npanuhin.me/all.json](https://bing.npanuhin.me/all.json).
-* **Deterministic Deduplication:** Extracts Microsoft inner archival keys (`OHR.Codename`) across 11 regional markets to prevent duplicate downloads while protecting non-Latin CJK title strings.
-* **Quality Upgrading:** Intercepts standard resolution strings and modifies the stream parameters to pull 4K UHD renditions (`&rf=LaDigue_UHD.jpg`).
-* **Binary Integrity Check:** Streamed bytes pass through PIL/Pillow (`Image.verify()`) to ensure no truncated or damaged JPEGs are written to disk.
-* **EXIF/IPTC Enrichment:** Injects metadata directly into JPEG APP1 headers (`0x9c9b XPTitle`, `0x010e ImageDescription`, `0x8298 Copyright`).
+* **Deterministic Deduplication:** Extracts Microsoft inner archival keys (`OHR.Codename`) across 11
+ regional markets to prevent duplicate downloads while protecting non-Latin CJK title strings.
+* **Quality Upgrading:** Intercepts standard resolution strings and modifies the stream parameters to
+ pull 4K UHD renditions (`&rf=LaDigue_UHD.jpg`).
+* **Binary Integrity Check:** Streamed bytes pass through PIL/Pillow (`Image.verify()`) to ensure no
+ truncated or damaged JPEGs are written to disk.
+* **EXIF/IPTC Enrichment:** Injects metadata directly into JPEG APP1 headers (`0x9c9b XPTitle`, 
+`0x010e ImageDescription`, `0x8298 Copyright`).
 
 ---
 
