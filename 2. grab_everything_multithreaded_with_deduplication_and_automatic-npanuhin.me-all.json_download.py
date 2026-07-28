@@ -8,8 +8,8 @@ import piexif
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
-# Pipeline Installation Directory Target
-SCRIPT_DIR = r"C:\_BingBackgrounds.py\anerg.com.py"
+# Dynamic execution path resolution (portable across drives/directories)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ARCHITECTURAL PATH ROUTING STRATEGY:
 # False -> Persists assets inside structured hierarchical subdirectories (e.g., _OUT\2026\07\image.jpg)
@@ -19,12 +19,6 @@ FLATTEN_OUTPUT = False
 #FLATTEN_OUTPUT = True
 
 # CONCURRENCY SCALING CONFIGURATION:
-# --------------------------------------------------------------------------------------------------
-# Default: 6. Despite what the internet claims below, "6" seems to be a very hard limit.
-# Safe Bounds (5 - 8 workers)   : Minimal I/O footprint; eliminates risk of HTTP 429 rate-limiting.
-# Sweet Spot  (10 - 16 workers) : Optimal TCP multiplexing; delivers ~10x-15x throughput gains.
-# Aggressive  (20 - 32 workers) : Near total network saturation; potential for dropped sockets.
-# Overkill    (50+ workers)     : High risk of edge server connection resets and thread starvation.
 MAX_WORKERS = 6
 
 # Remote JSON Manifest Source for Bing Image of the Day metadata
@@ -85,10 +79,8 @@ def sync_central_database():
 def inject_metadata_iptc(file_path, title, description, copyright_text):
     """Hard-injects EXIF/IPTC metadata into target JPEG markers optimized for Windows Shell indexers."""
     try:
-        # Note: Win32 Shell API property handlers require UTF-16LE Byte Order Mark (BOM) encoding for XP tags
         exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "1st": {}, "thumbnail": None}
 
-        # Tag Mappings: 0x9c9b = XPTitle (UTF-16LE), 0x010e = ImageDescription (UTF-8), 0x9c9c = XPComment, 0x8298 = Copyright
         if title:
             exif_dict["0th"][0x9c9b] = title.encode('utf-16le')
             exif_dict["0th"][0x010e] = title.encode('utf-8')
@@ -99,10 +91,7 @@ def inject_metadata_iptc(file_path, title, description, copyright_text):
         if copyright_text:
             exif_dict["0th"][0x8298] = copyright_text.encode('utf-8')
 
-        # Serialize structured dictionary into binary EXIF stream layout
         exif_bytes = piexif.dump(exif_dict)
-
-        # Mutate binary stream directly within target file headers
         piexif.insert(exif_bytes, file_path)
         return True
     except Exception as e:
@@ -121,7 +110,6 @@ def clean_title(title_str):
         'under', 'above', 'during', 'without', 'against', 'including', 'across'
     }
 
-    # UNICODE REGEX BOUNDARY: Strips illegal filesystem characters and Asian punctuation delimiters
     clean = re.sub(r'[\x00-\x1f\\/:*?"<>|,\. !?’’“” ]|，|。|！|＿|：', ' ', title_str)
 
     words = clean.split()
@@ -129,7 +117,6 @@ def clean_title(title_str):
 
     for w in words:
         if w.lower() not in stop_words:
-            # Capitalize Western ASCII strings, pass native Asian/CJK scripts untouched
             filtered_words.append(w.capitalize() if w.isascii() else w)
 
     if not filtered_words:
@@ -137,7 +124,6 @@ def clean_title(title_str):
 
     raw_cleaned = " ".join(filtered_words)
 
-    # PATH BOUNDARY PROTECTION: Truncate base string to prevent MAX_PATH (260 char) buffer overflows
     if len(raw_cleaned) > 60:
         raw_cleaned = raw_cleaned[:60].rstrip(' ')
 
@@ -165,22 +151,46 @@ def load_local_json(path):
 
 
 def download_single_wallpaper(task):
-    """Downloads target asset, validates binary integrity, and enforces layout rules."""
+    """Downloads target asset, validates binary integrity, and enforces dynamic fallback path routing."""
     date_str, img_name, img_url, title, description, copyright_text = task
 
-    clean_date = date_str.replace("-", "") # E.g., "20260727"
-    year_str = clean_date[:4]              # Extracts "2026"
-    month_str = clean_date[4:6]            # Extracts "07"
+    # --- FALLBACK PATH ROUTING ENGINE ---
+    clean_date = date_str.replace("-", "") if date_str else ""
+    year_match = re.search(r'\b(19\d\d|20\d\d)\b', clean_date)
+    
+    # Check if we have a full YYYYMMDD structure vs YYYY only vs No Date
+    if len(clean_date) >= 8 and clean_date[:8].isdigit():
+        year_str = clean_date[:4]
+        month_str = clean_date[4:6]
+        date_prefix = clean_date[:8]
+    elif year_match:
+        year_str = year_match.group(1)
+        month_str = None
+        date_prefix = year_str
+    elif len(clean_date) >= 4 and clean_date[:4].isdigit():
+        year_str = clean_date[:4]
+        month_str = None
+        date_prefix = year_str
+    else:
+        year_str = "0000"
+        month_str = None
+        date_prefix = "0000"
 
-    # Evaluate dynamic path resolver based on global FLATTEN_OUTPUT toggle
+    # Directory Resolution Strategy
     if FLATTEN_OUTPUT:
         target_folder = DOWNLOAD_DIR
         log_path_display = ""
     else:
-        target_folder = os.path.join(DOWNLOAD_DIR, year_str, month_str)
-        log_path_display = f"{year_str}\\{month_str}\\"
+        if year_str == "0000":
+            target_folder = os.path.join(DOWNLOAD_DIR, "0000")
+            log_path_display = "0000\\"
+        elif month_str:
+            target_folder = os.path.join(DOWNLOAD_DIR, year_str, month_str)
+            log_path_display = f"{year_str}\\{month_str}\\"
+        else:
+            target_folder = os.path.join(DOWNLOAD_DIR, year_str)
+            log_path_display = f"{year_str}\\"
 
-    # Idempotent directory tree generation
     os.makedirs(target_folder, exist_ok=True)
 
     # --- MICROSOFT ARCHIVAL IDENTIFIER EXTRACTION ---
@@ -189,26 +199,23 @@ def download_single_wallpaper(task):
         raw_code = img_url.split("id=OHR.")[-1].split("&")[0] if "id=OHR." in img_url else (
             img_url.split("/OHR.")[-1] if "/OHR." in img_url else img_url.split("/")[-1]
         )
-        # Regex captures localized serials (e.g., EN-US6345786269_UHD)
+        # Updated regex to match single-threaded extraction (strips regional prefixes)
         match = re.search(r'([A-Za-z]{2,4}-?[A-Za-z]{2,4}?\d{5,12}_(?:UHD|\d{3,4}x\d{3,4}))', raw_code, re.IGNORECASE)
         if match:
             ms_code = match.group(1)
     except Exception:
         ms_code = None
 
-    # Construct target filename with optional Microsoft codename signature
     if ms_code:
-        filename = f"{clean_date}_{img_name} ({ms_code}).jpg"
+        filename = f"{date_prefix}_{img_name} ({ms_code}).jpg"
     else:
-        filename = f"{clean_date}_{img_name}.jpg"
+        filename = f"{date_prefix}_{img_name}.jpg"
 
     file_path = os.path.join(target_folder, filename)
 
-    # Local disk deduplication: Skip I/O cycles if non-empty target already exists
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return None
 
-    # Mutate resolution path parameters to request 4K Ultra HD streams
     if "1920x1080" in img_url:
         target_url = img_url.replace("1920x1080", "UHD")
     elif "1366x768" in img_url:
@@ -223,7 +230,7 @@ def download_single_wallpaper(task):
     elif "bing.com" in target_url and not target_url.startswith("http"):
         target_url = "https://" + target_url
 
-    time.sleep(0.2) # Throttle connection initiation rate slightly
+    time.sleep(0.2)
 
     try:
         # --- EXECUTE ULTRA HD (4K) DOWNLOAD VECTOR ---
@@ -233,7 +240,6 @@ def download_single_wallpaper(task):
                 for chunk in img_res.iter_content(chunk_size=65536):
                     f.write(chunk)
 
-            # BINARY VALIDATION: Assert image stream integrity before proceeding
             try:
                 if os.path.getsize(file_path) > 0:
                     with Image.open(file_path) as img:
@@ -244,7 +250,7 @@ def download_single_wallpaper(task):
                     return f"[UHD Download] -> {log_path_display}{filename}{meta_tag}"
             except Exception:
                 if os.path.exists(file_path):
-                    os.remove(file_path) # Purge corrupt payload
+                    os.remove(file_path)
 
         # --- EXECUTE 1080p HD FALLBACK ROUTINE ---
         fallback_url = "https://bing.com" + img_url if img_url.startswith("/") else img_url
@@ -257,7 +263,6 @@ def download_single_wallpaper(task):
                 for chunk in fb_res.iter_content(chunk_size=65536):
                     f.write(chunk)
 
-            # BINARY VALIDATION (FALLBACK STREAM):
             try:
                 if os.path.getsize(file_path) > 0:
                     with Image.open(file_path) as img:
@@ -287,7 +292,7 @@ def main():
         print(f"[!] CRITICAL ERROR: Could not parse all.json.latest!")
         return
 
-    print("[+] The database has been loaded successfully! Starting fool-proof cross-region deduplication in RAM...")
+    print("[+] The database has been loaded successfully! Starting cross-region deduplication in RAM...")
 
     unique_wallpapers = {}
 
@@ -305,9 +310,6 @@ def main():
             description = entry.get('description')
             copyright_text = entry.get('copyright')
 
-            if not date_str:
-                continue
-
             img_url = bing_url if bing_url else storage_url
             if not img_url:
                 continue
@@ -321,17 +323,17 @@ def main():
                 else:
                     base_key = img_url.split("/")[-1].split("_")[0].replace(".jpg", "").lower()
             except Exception:
-                base_key = date_str.replace("-", "")
+                base_key = date_str.replace("-", "") if date_str else "0000"
 
             if not base_key or len(base_key) < 3 or base_key in ["bingimage", "wallpaper", "image"]:
-                base_key = f"date_{date_str.replace('-', '')}"
+                base_key = f"date_{date_str.replace('-', '')}" if date_str else "date_0000"
 
             if base_key:
                 base_key = re.sub(r'(\d{2})y$', r'20\1', base_key)
                 if 'lanterfestival' in base_key:
                     base_key = base_key.replace('lanterfestival', 'lanternfestival')
 
-            # 2. Resolve localized geographic entity string (CJK/Unicode Unlocked)
+            # 2. Resolve localized geographic entity string
             img_name = None
             if title and title.strip():
                 img_name = clean_title(title)
@@ -340,11 +342,9 @@ def main():
             if not img_name and entry.get('name'):
                 img_name = entry.get('name')
 
-            # Fallback Strategy: Tokenize and re-space raw CamelCase codenames
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"]:
                 if base_key and not base_key.startswith("date_"):
                     working_name = base_key
-
                     bing_keywords = [
                         'day', 'season', 'festival', 'summer', 'spring', 'autumn', 'winter',
                         'labor', 'work', 'may', 'sky', 'tree', 'tower', 'bridge', 'beach',
@@ -364,19 +364,19 @@ def main():
                     working_name = re.sub(r'(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])', ' ', working_name)
                     img_name = clean_title(working_name)
 
-            # High-Priority Unicode Protection Fallback
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"] or img_name.startswith("date_"):
                 if title and title.strip():
                     img_name = clean_title(title)
                 elif caption and caption.strip() and caption.lower() != "info":
                     img_name = clean_title(caption)
 
+            fallback_suffix = date_str.replace('-', '') if date_str else "0000"
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"]:
-                img_name = f"Wallpaper_{date_str.replace('-', '')}"
+                img_name = f"Wallpaper_{fallback_suffix}"
             if len(img_name) < 3:
-                img_name = f"Wallpaper_{date_str.replace('-', '')}"
+                img_name = f"Wallpaper_{fallback_suffix}"
 
-            # 3. State-Collision Resolution: RAM Deduplication with CJK Glyph Guard
+            # 3. RAM Deduplication Logic (Updated to prioritize US/UK metadata)
             if base_key not in unique_wallpapers:
                 unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
             else:
@@ -386,18 +386,16 @@ def main():
                 is_existing_generic = existing_name.lower().startswith("wallpaper_") or existing_name.lower().startswith("bingimage_")
                 is_new_better = not img_name.lower().startswith("wallpaper_") and not img_name.lower().startswith("bingimage_")
 
-                # UNICODE GUARD: Prevents rich non-Latin metadata entries from being overwritten by US/UK regional defaults
-                if (is_existing_generic and is_new_better) or (short_name in ['us', 'uk'] and is_existing_generic):
+                if (is_existing_generic and is_new_better) or (short_name in ['us', 'uk'] and is_new_better):
                     unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
 
     download_queue = list(unique_wallpapers.values())
-    download_queue.sort(key=lambda x: x[0], reverse=True)
+    download_queue.sort(key=lambda x: x[0] if x[0] else "", reverse=True)
 
     total_tasks = len(download_queue)
     print(f"[+] Deduplication complete! {total_tasks} TRULY WORLDWIDE UNIQUE images with metadata ready.")
     print(f"[*] Multi-threading started with {MAX_WORKERS} concurrent connections (Safe mode with EXIF/IPTC injection)...\n")
 
-    # CONCURRENCY ENGINE INITIALIZATION
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {executor.submit(download_single_wallpaper, task): task for task in download_queue}
