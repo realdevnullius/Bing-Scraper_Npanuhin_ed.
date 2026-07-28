@@ -68,7 +68,7 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 
 
-1\. Clone or download this repository into your target installation folder (e.g., `C:\\\_BingBackgrounds.py\\anerg.com.py\\`).
+1\. Clone or download this repository into your target installation folder (e.g., `C:\_BingBackgrounds.py\anerg.com.py\`).
 
 2\. Double-click \*\*`run.cmd`\*\*. This automated batch layer will instantly verify your Python environment, install required library dependencies (`requests`, `piexif`, `Pillow`), correct working directory scopes, and launch the multi-threaded connection worker pool.
 
