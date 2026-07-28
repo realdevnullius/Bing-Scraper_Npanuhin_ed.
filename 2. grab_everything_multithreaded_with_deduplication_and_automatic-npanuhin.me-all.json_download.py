@@ -8,46 +8,35 @@ import piexif
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
-# Dynamic execution path resolution (portable across drives/directories)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ARCHITECTURAL PATH ROUTING STRATEGY:
 # False -> Persists assets inside structured hierarchical subdirectories (e.g., _OUT\2026\07\image.jpg)
 # True  -> Flattens the dependency graph and writes assets directly into root (e.g., _OUT\image.jpg)
-# NOTE: Required for legacy shell background switchers lacking recursive directory traversal support.
 FLATTEN_OUTPUT = False
-#FLATTEN_OUTPUT = True
 
-# CONCURRENCY SCALING CONFIGURATION:
 MAX_WORKERS = 6
-
-# Remote JSON Manifest Source for Bing Image of the Day metadata
 JSON_URL = "https://bing.npanuhin.me/all.json"
 
 LOCAL_JSON_PATH = os.path.join(SCRIPT_DIR, "all.json.latest")
 DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "_OUT")
 
-# ISO-639-1 / BCP 47 Region Mapping Architecture
 REGIONS = {
     'us': 'US-en', 'uk': 'GB-en', 'de': 'DE-de', 'fr': 'FR-fr',
     'ja': 'JP-ja', 'au': 'AU-en', 'cn': 'CN-zh', 'ca': 'CA-en',
     'in': 'IN-en', 'br': 'BR-pt', 'row': 'ROW-en'
 }
 
-# Guarantee root target directory existence prior to task scheduling
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Standardized User-Agent headers to satisfy CDN edge firewall inspection rules
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 }
 
 
 def sync_central_database():
-    """Fetches the remote database manifest and serializes an updated local AST representation."""
     print(f"[*] Initialising remote database synchronization routine...")
     print(f"[*] Target Endpoint: {JSON_URL}")
-    print(f"[*] Fetching payload... Automatic runtime stream decoding active.")
 
     api_headers = {
         "User-Agent": headers["User-Agent"],
@@ -58,9 +47,6 @@ def sync_central_database():
     try:
         response = requests.get(JSON_URL, headers=api_headers, timeout=60)
         if response.status_code == 200:
-            print("[+] Connection established! Database payload received successfully.")
-            print("[*] Restructuring remote dataset into pretty-printed local archive...")
-
             parsed_json = response.json()
             with open(LOCAL_JSON_PATH, 'w', encoding='utf-8') as f:
                 json.dump(parsed_json, f, indent=4, ensure_ascii=False)
@@ -69,7 +55,7 @@ def sync_central_database():
             print(f"[ ] Sync complete! all.json.latest refreshed successfully 🎉 ({final_size / (1024*1024):.2f} MB).")
             return True
         else:
-            print(f"[!] Target endpoint rejected transaction. HTTP Status Code: {response.status_code}")
+            print(f"[!] HTTP Status Code: {response.status_code}")
             return False
     except Exception as e:
         print(f"[!] Critical network failure during database ingestion: {e}")
@@ -77,7 +63,6 @@ def sync_central_database():
 
 
 def inject_metadata_iptc(file_path, title, description, copyright_text):
-    """Hard-injects EXIF/IPTC metadata into target JPEG markers optimized for Windows Shell indexers."""
     try:
         exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "1st": {}, "thumbnail": None}
 
@@ -100,7 +85,6 @@ def inject_metadata_iptc(file_path, title, description, copyright_text):
 
 
 def clean_title(title_str):
-    """Sanitizes raw string payloads into deterministic signatures while preserving global Unicode (CJK) glyphs."""
     if not title_str:
         return "BingImage"
 
@@ -111,64 +95,42 @@ def clean_title(title_str):
     }
 
     clean = re.sub(r'[\x00-\x1f\\/:*?"<>|,\. !?’’“” ]|，|。|！|＿|：', ' ', title_str)
-
     words = clean.split()
-    filtered_words = []
-
-    for w in words:
-        if w.lower() not in stop_words:
-            filtered_words.append(w.capitalize() if w.isascii() else w)
+    filtered_words = [w.capitalize() if w.isascii() else w for w in words if w.lower() not in stop_words]
 
     if not filtered_words:
         return "BingImage"
 
     raw_cleaned = " ".join(filtered_words)
-
-    if len(raw_cleaned) > 60:
-        raw_cleaned = raw_cleaned[:60].rstrip(' ')
-
-    return raw_cleaned
+    return raw_cleaned[:60].rstrip(' ') if len(raw_cleaned) > 60 else raw_cleaned
 
 
 def load_local_json(path):
-    """Deserializes local JSON cache and executes fallback token recovery on truncated streams."""
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read().strip()
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        print("[!] Local JSON payload is corrupted or incomplete. Executing automated recovery block...")
         if not content.endswith('}'):
-            if content.endswith(']'):
-                content += '}'
-            else:
-                content += ']}'
+            content += '}' if content.endswith(']') else ']}'
         try:
             return json.loads(content)
-        except Exception as e:
-            print(f"[!] Critical structural failure parsing recovered all.json.latest: {e}")
+        except Exception:
             return None
 
 
 def download_single_wallpaper(task):
-    """Downloads target asset, validates binary integrity, and enforces dynamic fallback path routing."""
     date_str, img_name, img_url, title, description, copyright_text = task
 
-    # --- FALLBACK PATH ROUTING ENGINE ---
-    clean_date = date_str.replace("-", "") if date_str else ""
-    year_match = re.search(r'\b(19\d\d|20\d\d)\b', clean_date)
+    # --- ACCURATE YYYY\MM PATH ROUTING ENGINE ---
+    digits_only = re.sub(r'\D', '', str(date_str)) if date_str else ""
     
-    # Check if we have a full YYYYMMDD structure vs YYYY only vs No Date
-    if len(clean_date) >= 8 and clean_date[:8].isdigit():
-        year_str = clean_date[:4]
-        month_str = clean_date[4:6]
-        date_prefix = clean_date[:8]
-    elif year_match:
-        year_str = year_match.group(1)
-        month_str = None
-        date_prefix = year_str
-    elif len(clean_date) >= 4 and clean_date[:4].isdigit():
-        year_str = clean_date[:4]
+    if len(digits_only) >= 6:
+        year_str = digits_only[:4]
+        month_str = digits_only[4:6]
+        date_prefix = digits_only[:8] if len(digits_only) >= 8 else digits_only
+    elif len(digits_only) >= 4:
+        year_str = digits_only[:4]
         month_str = None
         date_prefix = year_str
     else:
@@ -176,7 +138,6 @@ def download_single_wallpaper(task):
         month_str = None
         date_prefix = "0000"
 
-    # Directory Resolution Strategy
     if FLATTEN_OUTPUT:
         target_folder = DOWNLOAD_DIR
         log_path_display = ""
@@ -193,24 +154,18 @@ def download_single_wallpaper(task):
 
     os.makedirs(target_folder, exist_ok=True)
 
-    # --- MICROSOFT ARCHIVAL IDENTIFIER EXTRACTION ---
     ms_code = None
     try:
         raw_code = img_url.split("id=OHR.")[-1].split("&")[0] if "id=OHR." in img_url else (
             img_url.split("/OHR.")[-1] if "/OHR." in img_url else img_url.split("/")[-1]
         )
-        # Updated regex to match single-threaded extraction (strips regional prefixes)
         match = re.search(r'([A-Za-z]{2,4}-?[A-Za-z]{2,4}?\d{5,12}_(?:UHD|\d{3,4}x\d{3,4}))', raw_code, re.IGNORECASE)
         if match:
             ms_code = match.group(1)
     except Exception:
         ms_code = None
 
-    if ms_code:
-        filename = f"{date_prefix}_{img_name} ({ms_code}).jpg"
-    else:
-        filename = f"{date_prefix}_{img_name}.jpg"
-
+    filename = f"{date_prefix}_{img_name} ({ms_code}).jpg" if ms_code else f"{date_prefix}_{img_name}.jpg"
     file_path = os.path.join(target_folder, filename)
 
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
@@ -233,7 +188,6 @@ def download_single_wallpaper(task):
     time.sleep(0.2)
 
     try:
-        # --- EXECUTE ULTRA HD (4K) DOWNLOAD VECTOR ---
         img_res = requests.get(target_url, headers=headers, timeout=15, stream=True)
         if img_res.status_code == 200:
             with open(file_path, 'wb') as f:
@@ -252,7 +206,6 @@ def download_single_wallpaper(task):
                 if os.path.exists(file_path):
                     os.remove(file_path)
 
-        # --- EXECUTE 1080p HD FALLBACK ROUTINE ---
         fallback_url = "https://bing.com" + img_url if img_url.startswith("/") else img_url
         if "bing.com" in fallback_url and not fallback_url.startswith("http"):
             fallback_url = "https://" + fallback_url
@@ -292,8 +245,6 @@ def main():
         print(f"[!] CRITICAL ERROR: Could not parse all.json.latest!")
         return
 
-    print("[+] The database has been loaded successfully! Starting cross-region deduplication in RAM...")
-
     unique_wallpapers = {}
 
     for short_name, json_key in REGIONS.items():
@@ -314,7 +265,6 @@ def main():
             if not img_url:
                 continue
 
-            # 1. Extract canonical Microsoft internally-assigned codename
             base_key = None
             try:
                 if "id=OHR." in img_url:
@@ -333,7 +283,6 @@ def main():
                 if 'lanterfestival' in base_key:
                     base_key = base_key.replace('lanterfestival', 'lanternfestival')
 
-            # 2. Resolve localized geographic entity string
             img_name = None
             if title and title.strip():
                 img_name = clean_title(title)
@@ -371,12 +320,9 @@ def main():
                     img_name = clean_title(caption)
 
             fallback_suffix = date_str.replace('-', '') if date_str else "0000"
-            if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"]:
-                img_name = f"Wallpaper_{fallback_suffix}"
-            if len(img_name) < 3:
+            if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"] or len(img_name) < 3:
                 img_name = f"Wallpaper_{fallback_suffix}"
 
-            # 3. RAM Deduplication Logic (Updated to prioritize US/UK metadata)
             if base_key not in unique_wallpapers:
                 unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
             else:
@@ -394,7 +340,7 @@ def main():
 
     total_tasks = len(download_queue)
     print(f"[+] Deduplication complete! {total_tasks} TRULY WORLDWIDE UNIQUE images with metadata ready.")
-    print(f"[*] Multi-threading started with {MAX_WORKERS} concurrent connections (Safe mode with EXIF/IPTC injection)...\n")
+    print(f"[*] Multi-threading started with {MAX_WORKERS} concurrent connections...\n")
 
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -408,14 +354,13 @@ def main():
             except KeyboardInterrupt:
                 print("\n[!] Ctrl+C detected! Emptying multi-threaded task queue...")
                 executor.shutdown(wait=False, cancel_futures=True)
-                print("[X] Hard-killing active network background threads...")
                 os._exit(0)
 
     except KeyboardInterrupt:
         print("\n[X] Script execution successfully aborted.")
         os._exit(0)
 
-    print(f"\n[ ] Outstanding! The metadata-enriched asset archiving is complete 🎉\nin:\n{DOWNLOAD_DIR}")
+    print(f"\n[ ] Outstanding! Archiving is complete 🎉\nin:\n{DOWNLOAD_DIR}")
 
 
 if __name__ == "__main__":
