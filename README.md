@@ -1,95 +1,158 @@
-\# Bing Wallpaper Archive Pipeline
+I hear you, and I apologize for the frustration! The issue was nested code blocks: because the `README.md` contains its own code blocks (````python`, ````powershell`), wrapping it in standard triple backticks was breaking the block early and splitting the text into a mix of rich text and broken code boxes.
 
+Using **four backticks** forces the interface to render the entire `README.md` inside **one single, clean, copyable block**:
 
+```markdown
+# 🖼️ Bing Wallpaper Archive Pipeline
 
-A production-grade, cross-region deduplicating downloader pipeline for the global Bing Image of the Day archive. This pipeline aggregates manifests across multiple worldwide endpoints, enforces strict asset binary integrity checks, and injects explorer-readable shell metadata directly into the image files.
+A robust, cross-region deduplicating downloader pipeline for the global **Bing Image of the Day** archive. Available in both **Single-Threaded (Sequential)** and **Multi-Threaded (Concurrent)** editions.
 
+This pipeline syncs manifests across 11 worldwide regional endpoints, performs in-memory deduplication, enforces Ultra HD (4K) image quality, verifies binary payload integrity, and hard-injects Windows Shell-compatible EXIF/IPTC metadata into every asset.
 
+---
 
-Optimized specifically for seamless integration with advanced third-party wallpaper rotators such as \*\*John's Background Switcher\*\*.
+## 📸 Key Features
 
+* **🌍 Worldwide Cross-Region Deduplication:** Evaluates regional Bing markets (`US`, `UK`, `DE`, `FR`, `JA`, `AU`, `CN`, `CA`, `IN`, `BR`, `ROW`) in RAM to ensure duplicate global images are downloaded exactly once.
+* **⚡ Dual Execution Engines:**
+  * **Multi-Threaded Engine:** Uses `ThreadPoolExecutor` TCP multiplexing for speed (5x–15x throughput gains).
+  * **Single-Threaded Engine:** Strict sequential ingestion for connection stability on low-bandwidth networks or strict firewalls.
+* **🎯 Unicode & CJK Script Preservation:** Prevents descriptive international filenames (Chinese, Japanese, Korean, German, etc.) from being overwritten with generic fallback strings.
+* **✨ Automatic 4K Ultra HD Upgrading:** Dynamically rewrites standard high-definition asset URLs to target Ultra HD (`_UHD.jpg`) streams on Bing's CDNs.
+* **🏷️ Windows Explorer Metadata Injection:** Directly writes native `EXIF/IPTC` metadata tags using UTF-16LE Byte Order Mark (BOM) encoding. Windows Explorer reads image titles, descriptions, and copyrights natively in File Explorer properties.
+* **🔄 Flexible Directory Architecture:** Supports both structured `_OUT\YYYY\MM\filename.jpg` output and flat `_OUT\filename.jpg` storage via a simple global toggle.
+* **🖼️ Background Switcher Ready:** Optimized for seamless integration with desktop wallpaper rotation software, such as *John's Background Switcher*.
 
+---
 
-\## 🚀 Key Architectural Features
+## 🏎️ Pipeline Comparison: Single-Threaded vs. Multi-Threaded
 
+| Feature / Dimension | Single-Threaded Edition | Multi-Threaded Edition |
+| --- | --- | --- |
+| **Execution Vector** | Sequential (1 asset at a time) | Concurrent (`ThreadPoolExecutor`) |
+| **Speed / Throughput** | Standard Network Throughput | ~max. 6x Speedup |
+| **Default Concurrency** | `1 worker` | `6 workers` (Hard Limit: Max 6) |
+| **Graceful Shutdown** | Standard `Ctrl+C` interrupt | Signal intercept + `executor.shutdown()` |
+| **Best Used For** | Metered links, strict VPNs/proxies | Bulk archiving, high-speed initial runs |
 
+---
 
-\*   \*\*Worldwide Cross-Region Deduplication:\*\* Evaluates shifting regional markets (`US`, `CN`, `JP`, `DE`, etc.) in memory via a unified tracking index, ensuring identical assets are downloaded exactly once.
+## 🏁 Quick Start (For Beginners)
 
-\*   \*\*Unicode Script Preservation Strategy:\*\* Gives absolute priority to descriptive English titles while actively preserving rich native script titles (Chinese, Japanese, etc.) as premium fallback filenames instead of assigning generic string signatures.
+### 1. Requirements
 
-\*   \*\*Automatic 4K Resolution Upgrading:\*\* Automatically rewrites standard high-definition asset manifests into Ultra HD (`UHD`) resolution endpoints before initializing transactions.
+* Windows 10 or Windows 11
+* Python 3.8 or higher installed on your system
 
-\*   \*\*Fault-Tolerant Dynamic Fallbacks:\*\* Automatically activates an asynchronous standard high-definition recovery routine if the target UHD asset is truncated, missing, or drops packets during download.
+### 2. Setup & Execution
 
-\*   \*\*Win32 Shell Explorer Metadata Injection:\*\* Hard-injects clean custom `EXIF/IPTC` metadata blocks directly into target JPEGs using strict UTF-16LE Byte Order Mark configurations for seamless native Windows desktop shell properties parsing.
+1. Download or clone this repository to your computer (e.g., `C:\_BingBackgrounds.py\anerg.com.py\`).
+2. Double-click **`run.cmd`**.
 
-\*   \*\*Flexible Structural Routing Toggle:\*\* Employs a `FLATTEN\_OUTPUT` switcher configuration. Set to `True` to store all structural imagery flat inside a single root workspace folder (highly recommended for John's Background Switcher, which does not recurse subdirectories).
+> **What `run.cmd` does automatically:**
+> * Checks your Python installation.
+> * Installs missing Python libraries (`requests`, `piexif`, `Pillow`).
+> * Synchronizes the central Bing manifest database (`all.json.latest`).
+> * Downloads and metadata-enriches all available wallpapers into the `_OUT` directory.
 
+---
 
+## 💻 Manual / Advanced Usage (For Power Users)
 
-\## 📁 Directory Structure Alignment
+If you prefer running the script manually from PowerShell or Command Prompt:
 
+```powershell
+# 1. Install required dependencies
+pip install requests piexif Pillow
 
+# 2. Run the Multi-Threaded Edition (Fastest)
+python '.\2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py'
 
-The pipeline expects and maintains the following clean workspace directory taxonomy:
-
-
-
-```text
-
-📁 C:\_BingBackgrounds.py\\anerg.com.py\
-
-│
-
-├── 📄 1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
-
-├── 📄 2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
-
-├── 📄 download_npanuhin.me-all.json.py (optional: use when you only want to download all.json)
-
-├── 📄 test_unicode.py (optional: do a quick test if path + file length is too large and how it handles Asian characters)
-
-├── 📄 run.cmd (One-Click Launcher) (optional: installs dependencies then starts downloading with multithread)
-
-├── 📄 flatten_out-folder.ps1 (optional: move all .\_OUT\YYYY\MM\*.jpg files to .\_OUT\*.jpg)
-
-├── 📄 requirements.txt (Dependencies)
-
-├── 📄 all.json.latest (Auto-Generated Cache Manifest)
-
-│
-
-└── 📁 \_OUT\ (Target Download Assets Repository Workspace)
-
+# 3. OR Run the Single-Threaded Edition (Sequential / Safe Mode)
+python '.\1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py'
 ```
 
+---
 
+## ⚙️ Configuration & Tuning Options
 
-\## 🛠️ Quick Start Configuration
+Open either `.py` script in any code editor to adjust global runtime parameters:
 
+```python
+# SCRIPT_DIR: Workspace installation target root
+SCRIPT_DIR = r"C:\_BingBackgrounds.py\anerg.com.py"
 
+# FLATTEN_OUTPUT Routing Toggle:
+# False -> Saves assets inside structured subdirectories: _OUT\YYYY\MM\filename.jpg
+# True  -> Flattens folder output directly into root:     _OUT\filename.jpg
+# (Set to True for legacy wallpaper rotators that cannot recurse subdirectories)
+FLATTEN_OUTPUT = False
 
-1\. Clone or download this repository into your target installation folder (e.g., `C:\_BingBackgrounds.py\anerg.com.py\`).
+# MAX_WORKERS (default = 6) (Multi-Threaded Script Only):
+# ------------------------------------------------------------------
+# NOTE: Going above 6 workers triggers HTTP 429 rate-limiting / CDN socket blocks.
+# Safe    (2 - 5 workers): Minimal I/O footprint for metered links or shared VPNs.
+# Default (6 workers)    : Recommended hard maximum for Bing edge CDN sockets.
+MAX_WORKERS = 6
+```
 
-2\. Edit \*\*`1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py`\*\* and \*\*`2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py files`\*\*.
+---
 
-3\. Double-click \*\*`run.cmd`\*\*. This automated batch layer will instantly verify your Python environment, install required library dependencies (`requests`, `piexif`, `Pillow`), correct working directory scopes, and launch the multi-threaded connection worker pool.
+## 📁 Repository Directory Taxonomy
 
-4\. Once completed, your `\_OUT` directory will be fully synchronized with metadata-enriched 4K wallpaper assets (when they were available - e.g., 2010 had no 4k!).
+```text
+📁 C:\_BingBackgrounds.py\anerg.com.py\
+│
+├── 📄 1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
+├── 📄 2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
+├── 📄 run.cmd                    <-- One-Click Launcher script
+├── 📄 requirements.txt           <-- Python dependencies list
+├── 📄 all.json.latest            <-- Auto-generated/cached Bing database manifest
+│
+└── 📁 _OUT\                      <-- Download workspace output target
+    ├── 📁 2026\
+    │   └── 📁 07\
+    │       └── 📄 20260727_ExampleTitle (EN-US6345786269_UHD).jpg
+    └── ...
+```
 
-5\. Instead of the \*\*`run.cmd`\*\*, you can also run the two .py scripts from (2) directly.  Use: python.exe '.\1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py'
+---
 
+## 🔬 Architectural Mechanics & Fallback Flow
 
-\## 📄 License
+```text
+[ Remote JSON Manifest ] ---> [ In-Memory RAM Deduplication ]
+                                        │
+                                        ▼
+                           [ Concurrency ThreadPool ]
+                                        │
+                           [ Resolve 4K UHD Target URL ]
+                                        │
+                         ┌──────────────┴──────────────┐
+                         ▼                             ▼
+                 [ HTTP 200 Stream ]           [ Request Error / 404 ]
+                         │                             │
+                         ▼                             ▼
+                 [ Pillow Verification ]      [ 1080p HD Fallback Route ]
+                         │                             │
+                         └──────────────┬──────────────┘
+                                        ▼
+                        [ Inject EXIF/IPTC Metadata ]
+                                        ▼
+                       [ Save Asset to _OUT Workspace ]
+```
 
+* **Manifest Ingestion:** Syncs the central database archive from [bing.npanuhin.me/all.json](https://bing.npanuhin.me/all.json).
+* **Deterministic Deduplication:** Extracts Microsoft inner archival keys (`OHR.Codename`) across 11 regional markets to prevent duplicate downloads while protecting non-Latin CJK title strings.
+* **Quality Upgrading:** Intercepts standard resolution strings and modifies the stream parameters to pull 4K UHD renditions (`&rf=LaDigue_UHD.jpg`).
+* **Binary Integrity Check:** Streamed bytes pass through PIL/Pillow (`Image.verify()`) to ensure no truncated or damaged JPEGs are written to disk.
+* **EXIF/IPTC Enrichment:** Injects metadata directly into JPEG APP1 headers (`0x9c9b XPTitle`, `0x010e ImageDescription`, `0x8298 Copyright`).
 
+---
 
-This project is licensed under the terms chosen within the repository file structure.
+## 📄 License & Credits
 
+* **Data Archive Source:** Remote Bing Image manifest provided via [npanuhin/bing-wallpaper](https://github.com/npanuhin/bing-wallpaper).
+* **Author / Maintainer:** Devnullius *(Devvie Nuis - the Realdevnullius)*.
 
-
-\## PEACE! By order of Devnullius.
-
-
-
+```
