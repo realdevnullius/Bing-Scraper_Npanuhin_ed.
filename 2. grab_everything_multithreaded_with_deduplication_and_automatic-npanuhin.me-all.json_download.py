@@ -15,7 +15,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # True  -> Flattens the dependency graph and writes assets directly into root (e.g., _OUT\image.jpg)
 FLATTEN_OUTPUT = False
 
-MAX_WORKERS = 6
+MAX_WORKERS = 15
 JSON_URL = "https://bing.npanuhin.me/all.json"
 
 LOCAL_JSON_PATH = os.path.join(SCRIPT_DIR, "all.json.latest")
