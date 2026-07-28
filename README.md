@@ -52,6 +52,8 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 ├── 📄 run.cmd (One-Click Launcher) (optional: installs dependencies then starts downloading with multithread)
 
+├── 📄 flatten_out-folder.ps1 (optional: move all .\_OUT\YYYY\MM\*.jpg files to .\_OUT\*.jpg)
+
 ├── 📄 requirements.txt (Dependencies)
 
 ├── 📄 all.json.latest (Auto-Generated Cache Manifest)
