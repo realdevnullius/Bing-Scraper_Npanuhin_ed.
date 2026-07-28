@@ -41,10 +41,10 @@ This pipeline syncs manifests across 11 worldwide regional endpoints, performs i
 
 ### 2. Setup & Execution
 
-1. Download or clone this repository to your computer.
-2. Double-click **`run.cmd`** (or create one using `python 2.grab_everything_multithreaded...py`).
+1. Download or clone this repository to any folder on your computer.
+2. Double-click **`run.cmd`** to start downloading.
 
-> **What automated execution does:**
+> **What `run.cmd` does automatically:**
 > * Checks your Python installation.
 > * Installs missing Python libraries (`requests`, `piexif`, `Pillow`).
 > * Synchronizes the central Bing manifest database (`all.json.latest`).
