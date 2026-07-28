@@ -38,17 +38,17 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 ```text
 
-📁 C:\\\_BingBackgrounds.py\\anerg.com.py\\
+📁 C:\_BingBackgrounds.py\\anerg.com.py\
 
 │
 
-├── 📄 1. grab\_everything\_singlethreaded\_...py
+├── 📄 1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
 
-├── 📄 2. grab\_everything\_multithreaded\_...py
+├── 📄 2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
 
-├── 📄 download\_npanuhin.me-all.json.py (optional: use when you only want to download all.json)
+├── 📄 download_npanuhin.me-all.json.py (optional: use when you only want to download all.json)
 
-├── 📄 test\_unicode.py (optional: do a quick test if path + file length is too large and how it handles Asian characters)
+├── 📄 test_unicode.py (optional: do a quick test if path + file length is too large and how it handles Asian characters)
 
 ├── 📄 run.cmd (One-Click Launcher) (optional: installs dependencies then starts downloading with multithread)
 
@@ -58,7 +58,7 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 │
 
-└── 📁 \_OUT\\ (Target Download Assets Repository Workspace)
+└── 📁 \_OUT\ (Target Download Assets Repository Workspace)
 
 ```
 
