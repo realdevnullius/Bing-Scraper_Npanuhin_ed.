@@ -2,12 +2,12 @@
 # 🖼️ Bing Wallpaper Archive Pipeline
 
 A robust, cross-region deduplicating downloader pipeline for the global **Bing Image of the Day**
- archive. Available in both **Single-Threaded (Sequential)** and **Multi-Threaded (Concurrent)** 
- editions.
+archive. Available in both **Single-Threaded (Sequential)** and **Multi-Threaded (Concurrent)** 
+editions.
 
 This pipeline syncs manifests across 11 worldwide regional endpoints, performs in-memory
- deduplication, enforces Ultra HD (4K) image quality, verifies binary payload integrity, and
- hard-injects Windows Shell-compatible EXIF/IPTC metadata into every asset.
+deduplication, enforces Ultra HD (4K) image quality, verifies binary payload integrity, and
+hard-injects Windows Shell-compatible EXIF/IPTC metadata into every asset.
 
 ---
 
