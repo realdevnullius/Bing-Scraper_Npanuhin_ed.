@@ -119,6 +119,52 @@ def load_local_json(path):
             return None
 
 
+import os
+import re
+import time
+import requests
+from PIL import Image
+
+def extract_ms_code(url, default_quality="HD"):
+    """
+    Extracts Microsoft Bing market codes and asset IDs.
+    Normalizes all resolution strings (\d+x\d+) to either 'UHD' or 'HD',
+    completely removing dimension numbers like 1920x1080 from filenames.
+    """
+    if not url:
+        return default_quality
+
+    raw = url
+    if "id=OHR." in raw:
+        raw = raw.split("id=OHR.")[-1]
+    elif "/OHR." in raw:
+        raw = raw.split("/OHR.")[-1]
+    elif "OHR." in raw:
+        raw = raw.split("OHR.")[-1]
+
+    raw = raw.split("&")[0].split("?")[0]
+    raw = re.sub(r'\.(jpg|jpeg|png)$', '', raw, flags=re.IGNORECASE)
+
+    # Determine Quality Tag (UHD vs HD)
+    if "uhd" in url.lower():
+        quality_tag = "UHD"
+    else:
+        quality_tag = "HD"
+
+    # 1. Full Market Code + ID (e.g., EN-US0450019921 or ZH-CN12345)
+    m = re.search(r'([A-Za-z]{2,4}-?[A-Za-z]{2,4}?\d{5,12})', raw, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}_{quality_tag}"
+
+    # 2. Market Code alone without numeric ID (e.g., EN-US, DE-DE, ROW)
+    m = re.search(r'([A-Za-z]{2,4}-[A-Za-z]{2,4}|ROW)', raw, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)}_{quality_tag}"
+
+    # 3. Legacy Fallback (No market/asset ID) -> Returns just 'UHD' or 'HD'
+    return quality_tag
+
+
 def download_single_wallpaper(task):
     date_str, img_name, img_url, title, description, copyright_text = task
 
@@ -154,23 +200,7 @@ def download_single_wallpaper(task):
 
     os.makedirs(target_folder, exist_ok=True)
 
-    ms_code = None
-    try:
-        raw_code = img_url.split("id=OHR.")[-1].split("&")[0] if "id=OHR." in img_url else (
-            img_url.split("/OHR.")[-1] if "/OHR." in img_url else img_url.split("/")[-1]
-        )
-        match = re.search(r'([A-Za-z]{2,4}-?[A-Za-z]{2,4}?\d{5,12}_(?:UHD|\d{3,4}x\d{3,4}))', raw_code, re.IGNORECASE)
-        if match:
-            ms_code = match.group(1)
-    except Exception:
-        ms_code = None
-
-    filename = f"{date_prefix}_{img_name} ({ms_code}).jpg" if ms_code else f"{date_prefix}_{img_name}.jpg"
-    file_path = os.path.join(target_folder, filename)
-
-    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-        return None
-
+    # Resolve UHD target URL
     if "1920x1080" in img_url:
         target_url = img_url.replace("1920x1080", "UHD")
     elif "1366x768" in img_url:
@@ -185,51 +215,78 @@ def download_single_wallpaper(task):
     elif "bing.com" in target_url and not target_url.startswith("http"):
         target_url = "https://" + target_url
 
+    # Resolve HD Fallback URL
+    fallback_url = "https://bing.com" + img_url if img_url.startswith("/") else img_url
+    if "bing.com" in fallback_url and not fallback_url.startswith("http"):
+        fallback_url = "https://" + fallback_url
+
+    # Compute clean target filenames with UHD/HD indicators
+    uhd_code = extract_ms_code(target_url, default_quality="UHD")
+    uhd_filename = f"{date_prefix}_{img_name} ({uhd_code}).jpg"
+    uhd_file_path = os.path.join(target_folder, uhd_filename)
+
+    hd_code = extract_ms_code(fallback_url, default_quality="HD")
+    hd_filename = f"{date_prefix}_{img_name} ({hd_code}).jpg"
+    hd_file_path = os.path.join(target_folder, hd_filename)
+
+    # Check for unparenthesized/legacy filenames to prevent duplicate downloads
+    legacy_filename = f"{date_prefix}_{img_name}.jpg"
+    legacy_file_path = os.path.join(target_folder, legacy_filename)
+
+    # Skip download if file already exists on disk in any valid format
+    if (os.path.exists(uhd_file_path) and os.path.getsize(uhd_file_path) > 0) or \
+       (os.path.exists(hd_file_path) and os.path.getsize(hd_file_path) > 0) or \
+       (os.path.exists(legacy_file_path) and os.path.getsize(legacy_file_path) > 0):
+        return None
+
     time.sleep(0.2)
 
     try:
+        # Attempt 1: 4K UHD Download
         img_res = requests.get(target_url, headers=headers, timeout=15, stream=True)
         if img_res.status_code == 200:
-            with open(file_path, 'wb') as f:
+            with open(uhd_file_path, 'wb') as f:
                 for chunk in img_res.iter_content(chunk_size=65536):
                     f.write(chunk)
 
             try:
-                if os.path.getsize(file_path) > 0:
-                    with Image.open(file_path) as img:
+                if os.path.getsize(uhd_file_path) > 0:
+                    with Image.open(uhd_file_path) as img:
                         img.verify()
 
-                    meta_status = inject_metadata_iptc(file_path, title, description, copyright_text)
+                    meta_status = inject_metadata_iptc(uhd_file_path, title, description, copyright_text)
                     meta_tag = " + Metadata EXIF/IPTC" if meta_status else ""
-                    return f"[UHD Download] -> {log_path_display}{filename}{meta_tag}"
+                    return f"[UHD Download] -> {log_path_display}{uhd_filename}{meta_tag}"
             except Exception:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
+                if os.path.exists(uhd_file_path):
+                    os.remove(uhd_file_path)
 
-        fallback_url = "https://bing.com" + img_url if img_url.startswith("/") else img_url
-        if "bing.com" in fallback_url and not fallback_url.startswith("http"):
-            fallback_url = "https://" + fallback_url
-
+        # Attempt 2: 1080p HD Fallback Download
         fb_res = requests.get(fallback_url, headers=headers, timeout=15, stream=True)
         if fb_res.status_code == 200:
-            with open(file_path, 'wb') as f:
+            with open(hd_file_path, 'wb') as f:
                 for chunk in fb_res.iter_content(chunk_size=65536):
                     f.write(chunk)
 
             try:
-                if os.path.getsize(file_path) > 0:
-                    with Image.open(file_path) as img:
+                if os.path.getsize(hd_file_path) > 0:
+                    with Image.open(hd_file_path) as img:
                         img.verify()
-                    inject_metadata_iptc(file_path, title, description, copyright_text)
-                    return f"[HD Fallback] -> {log_path_display}{filename} + Metadata EXIF/IPTC"
-            except Exception:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-    except Exception:
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
-    return f"[Failed] -> {filename}"
+                    meta_status = inject_metadata_iptc(hd_file_path, title, description, copyright_text)
+                    meta_tag = " + Metadata EXIF/IPTC" if meta_status else ""
+                    return f"[HD Fallback] -> {log_path_display}{hd_filename}{meta_tag}"
+            except Exception:
+                if os.path.exists(hd_file_path):
+                    os.remove(hd_file_path)
+
+    except Exception:
+        if os.path.exists(uhd_file_path):
+            os.remove(uhd_file_path)
+        if os.path.exists(hd_file_path):
+            os.remove(hd_file_path)
+
+    return f"[Failed] -> {uhd_filename}"
 
 
 def main():
