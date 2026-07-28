@@ -76,7 +76,7 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 4\. Once completed, your `\_OUT` directory will be fully synchronized with metadata-enriched 4K wallpaper assets.
 
-5\. Instead of the \*\*`run.cmd`\*\*, you can also run the two .py scripts from (2) directly.  
+5\. Instead of the \*\*`run.cmd`\*\*, you can also run the two .py scripts from (2) directly.  Use: python.exe '.\1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py'
 
 
 \## 📄 License

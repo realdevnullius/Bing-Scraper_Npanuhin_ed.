@@ -109,14 +109,14 @@ def clean_title(title_str):
         'between', 'among', 'during', 'without', 'against', 'including', 'across'
     }
     
-    # STANDARDIZED UNICODE REGEX: Filtert Windows pad-leestekens en behoudt Aziatische tekens vloeiend
+    # STANDARDIZED UNICODE REGEX: Replaces illegal filesystem markers and global punctuation vectors with whitespaces
     clean = re.sub(r'[\x00-\x1f\\/:*?"<>|,\. !?’’“”，。！＿：]', ' ', title_str)
     words = clean.split()
     
     filtered_words = []
     for w in words:
         if w.lower() not in stop_words:
-            # Capitalize western words, keep Asian scripts untouched
+            # Capitalize western words, keep Asian scripts completely untouched
             filtered_words.append(w.capitalize() if w.isascii() else w)
             
     if not filtered_words:
@@ -124,12 +124,11 @@ def clean_title(title_str):
         
     raw_cleaned = "_".join(filtered_words)
     
-    # LENGTEBEVEILIGING: Harde knip op 90 tekens tegen de Windows MAX_PATH-crashes
+    # PATH LENGTH BOUNDARY CLAMPING: Restrict filename lengths to 90 characters to guarantee Windows MAX_PATH compliance
     if len(raw_cleaned) > 90:
         raw_cleaned = raw_cleaned[:90].rstrip('_')
         
     return raw_cleaned
-
 
 def load_local_json(path):
     """Reads the local all.json.latest cache file and attempts to hot-fix missing structural trailing tokens."""
@@ -150,16 +149,15 @@ def load_local_json(path):
             print(f"[!] Critical structural failure parsing recovered all.json.latest: {e}")
             return None
 
-
 def download_single_wallpaper(task):
     """Processes the download, enforces file integrity, and listens to the FLATTEN_OUTPUT setting."""
     date_str, img_name, img_url, title, description, copyright_text = task
     
-    clean_date = date_str.replace("-", "")          # e.g., "20260727"
+    clean_date = date_str.replace("-", "")          # E.g., "20260727"
     year_str = clean_date[:4]                       # Extracts "2026"
     month_str = clean_date[4:6]                     # Extracts "07"
     
-    # 1. Choice of Quality: determine the target folder based on the setting FLATTEN_OUTPUT at the top
+    # Structural routing validation based on the FLATTEN_OUTPUT configuration toggle switch
     if FLATTEN_OUTPUT:
         target_folder = DOWNLOAD_DIR
         log_path_display = ""
@@ -167,18 +165,18 @@ def download_single_wallpaper(task):
         target_folder = os.path.join(DOWNLOAD_DIR, year_str, month_str)
         log_path_display = f"{year_str}\\{month_str}\\"
         
-    # FIX: Zorg dat de map altijd veilig wordt aangemaakt, ongeacht de FLATTEN_OUTPUT stand
+    # Security layer: Ensure workspace layout is fully generated regardless of formatting toggle
     os.makedirs(target_folder, exist_ok=True)
 
-    # 2. PRESERVE ORIGINAL FILENAME FORMAT: Maintain exact clean formatting architecture
+    # Generate the structured filename signature using the underscore-delimited title sanitizer
     filename = f"{clean_date}_{img_name}.jpg"
     file_path = os.path.join(target_folder, filename)
 
-    # EXTRA FAIL-SAFE: Overslaan mits het bestand bestaat EN groter is dan 0 bytes (repareert corrupte downloads)
+    # Hard local file deduplication block to prevent redundant network I/O cycles
     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
         return None
 
-    # Upgrade asset path resolution to Ultra HD (4K)
+    # Upgrade connection targeting resolution path to Ultra HD (4K)
     if "1920x1080" in img_url:
         target_url = img_url.replace("1920x1080", "UHD")
     elif "1366x768" in img_url:
@@ -188,13 +186,11 @@ def download_single_wallpaper(task):
     else:
         target_url = img_url + "&rf=LaDigue_UHD.jpg"
 
-    # Enforce secure fully-qualified domain endpoints to eliminate redirect latency
     if target_url.startswith("/"):
         target_url = "https://bing.com" + target_url
     elif "bing.com" in target_url and not target_url.startswith("http"):
         target_url = "https://" + target_url
 
-    # Add atomic throttling delay to safeguard client against rate-limiting blocks
     time.sleep(0.2)
 
     try:
@@ -205,32 +201,32 @@ def download_single_wallpaper(task):
                 for chunk in img_res.iter_content(chunk_size=65536):
                     f.write(chunk)
             
-            # INTEGRITEITSFAIL-SAFE: Controleer of de JPEG niet corrupt is binnengekomen in deze thread
+            # FILE INTEGRITY FAIL-SAFE: Enforce validation to detect truncated or corrupted stream downloads
             try:
                 if os.path.getsize(file_path) > 0:
                     with Image.open(file_path) as img:
-                        img.verify()  # Gooit een exception als de binaire data incompleet/corrupt is
+                        img.verify()  # Raises an exception if binary payload data is corrupted or incomplete
                     
                     meta_status = inject_metadata_iptc(file_path, title, description, copyright_text)
                     meta_tag = " + Metadata EXIF/IPTC" if meta_status else ""
                     return f"[UHD Download] -> {log_path_display}{filename}{meta_tag}"
             except Exception:
                 if os.path.exists(file_path):
-                    os.remove(file_path)  # Direct vernietigen om loze bestanden te voorkomen
-                # Schakel geruisloos over naar de HD Fallback routine hieronder
+                    os.remove(file_path)  # Evict defective artifact immediately to avoid processing loops
+                # Fall through silently to initiate the standard HD Fallback pipeline below
 
         # --- EXECUTE HD FALLBACK ROUTINE ---
         fallback_url = "https://bing.com" + img_url if img_url.startswith("/") else img_url
         if "bing.com" in fallback_url and not fallback_url.startswith("http"):
             fallback_url = "https://" + fallback_url
-                
+            
         fb_res = requests.get(fallback_url, headers=headers, timeout=15, stream=True)
         if fb_res.status_code == 200:
             with open(file_path, 'wb') as f:
                 for chunk in fb_res.iter_content(chunk_size=65536):
                     f.write(chunk)
             
-            # INTEGRITEITSFAIL-SAFE OOK OP HD FALLBACK:
+            # FILE INTEGRITY FAIL-SAFE (HD PIPELINE):
             try:
                 if os.path.getsize(file_path) > 0:
                     with Image.open(file_path) as img:
@@ -243,35 +239,8 @@ def download_single_wallpaper(task):
     except Exception:
         if os.path.exists(file_path):
             os.remove(file_path)
-    
+
     return f"[Failed]      -> {filename}"
-
-
-def clean_title(title_str):
-    """Sanitizes raw string payloads into deterministic, underscore-delimited title signatures by stripping noise and stopwords."""
-    if not title_str:
-        return "BingImage"
-        
-    stop_words = {
-        'the', 'in', 'on', 'at', 'of', 'and', 'a', 'an', 'to', 'for', 'with', 'off', 
-        'from', 'by', 'as', 'into', 'over', 'through', 'about', 'under', 'above', 
-        'between', 'among', 'during', 'without', 'against', 'including', 'across'
-    }
-    
-    # Strip syntax noise, capture tokens, and capitalize non-stopword components
-    clean = re.sub(r'[^a-zA-Z0-9\s]', '', title_str)
-    words = clean.split()
-    
-    filtered_words = []
-    for w in words:
-        if w.lower() not in stop_words:
-            filtered_words.append(w.capitalize())
-            
-    if not filtered_words:
-        return "BingImage"
-        
-    return "_".join(filtered_words)
-
 
 def main():
     sync_central_database()
