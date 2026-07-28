@@ -27,7 +27,7 @@ This pipeline syncs manifests across 11 worldwide regional endpoints, performs i
 | **Execution Vector** | Sequential (1 asset at a time) | Concurrent (`ThreadPoolExecutor`) |
 | **Speed / Throughput** | Standard Network Throughput | ~max. 6x Speedup |
 | **Default Concurrency** | `1 worker` | `6 workers` (Hard Limit: Max 6) |
-| **Graceful Shutdown** | Standard `Ctrl+C` interrupt | Signal intercept + `executor.shutdown()` |
+| **Graceful Shutdown** | Signal intercept + zero-byte cleanup | Signal intercept + `executor.shutdown()` |
 | **Best Used For** | Metered links, strict VPNs/proxies | Bulk archiving, high-speed initial runs |
 
 ---
@@ -79,7 +79,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # FLATTEN_OUTPUT Routing Toggle:
 # False -> Saves assets inside structured subdirectories: _OUT\YYYY\MM\filename.jpg
-# True  -> Flattens folder output directly into root:        _OUT\filename.jpg
+# True  -> Flattens folder output directly into root:         _OUT\filename.jpg
 # (Set to True for legacy wallpaper rotators that cannot recurse subdirectories)
 FLATTEN_OUTPUT = False
 
@@ -101,13 +101,13 @@ MAX_WORKERS = 6
 ├── 📄 1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
 ├── 📄 2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
 ├── 📄 run.cmd                  <-- One-Click Launcher script
-├── 📄 requirements.txt         <-- Python dependencies list
+├── 📄 requirements.txt          <-- Python dependencies list
 ├── 📄 all.json.latest          <-- Auto-generated/cached Bing database manifest
 │
 └── 📁 _OUT/                    <-- Download workspace output target
     ├── 📁 2026/
     │   └── 📁 07/
-    │       └── 📄 20260727_ExampleTitle (OHR.Example_EN-US6345786269_UHD).jpg
+    │       └── 📄 20260727_ExampleTitle (EN-US6345786269_UHD).jpg
     └── ...
 ```
 
@@ -117,32 +117,33 @@ MAX_WORKERS = 6
 
 ```text
 [ Remote JSON Manifest ] ---> [ In-Memory RAM Deduplication ]
-                                         │
-                                         ▼
+                                          │
+                                          ▼
                             [ Concurrency ThreadPool ]
-                                         │
+                                          │
+                                          ▼
                             [ Resolve 4K UHD Target URL ]
-                                         │
-                         ┌───────────────┴───────────────┐
-                         ▼                               ▼
-                 [ HTTP 200 Stream ]           [ Request Error / 404 ]
-                         │                               │
-                         ▼                               ▼
+                                          │
+                          ┌───────────────┴───────────────┐
+                          ▼                               ▼
+                 [ HTTP 200 Stream ]             [ Request Error / 404 ]
+                          │                               │
+                          ▼                               ▼
                  [ Pillow Verification ]      [ 1080p HD Fallback Route ]
-                         │                               │
-                         └───────────────┬───────────────┘
-                                         │
-                                         ▼
+                          │                               │
+                          └───────────────┬───────────────┘
+                                          │
+                                          ▼
                                 [ Inject EXIF/IPTC Metadata ]
-                                         │
-                                         ▼
+                                          │
+                                          ▼
                                [ Save Asset to _OUT Workspace ]
 ```
 
 * **Manifest Ingestion:** Syncs the central database archive from [bing.npanuhin.me/all.json](https://bing.npanuhin.me/all.json).
-* **Deterministic Deduplication:** Extracts Microsoft inner archival keys (`OHR.Codename`) across 11 regional markets to prevent duplicate downloads while protecting non-Latin CJK title strings.
+* **Deterministic Deduplication:** Extracts Microsoft market codes and asset IDs across 11 regional markets to append structured tags (e.g., `EN-US0450019921_UHD` or `ROW_HD`), preventing duplicate downloads across resolutions and legacy file schemes while preserving non-Latin CJK titles.
 * **Quality Upgrading:** Intercepts standard resolution strings and modifies the stream parameters to pull 4K UHD renditions (`&rf=LaDigue_UHD.jpg`).
-* **Binary Integrity Check:** Streamed bytes pass through PIL/Pillow (`Image.verify()`) to ensure no truncated or damaged JPEGs are written to disk.
+* **Binary Integrity Check:** Streamed bytes pass through PIL/Pillow (`Image.verify()`) to ensure no truncated or damaged JPEGs are written to disk. Incomplete downloads are immediately cleaned up on failure or interruption.
 * **EXIF/IPTC Enrichment:** Injects metadata directly into JPEG APP1 headers (`0x9c9b XPTitle`, `0x010e ImageDescription`, `0x8298 Copyright`).
 
 ---
