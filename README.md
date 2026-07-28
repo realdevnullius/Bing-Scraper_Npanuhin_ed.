@@ -1,4 +1,3 @@
-```markdown
 # 🖼️ Bing Wallpaper Archive Pipeline
 
 A robust, cross-region deduplicating downloader pipeline for the global **Bing Image of the Day**
