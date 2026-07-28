@@ -1,0 +1,19 @@
+# Block localized cache database manifests
+all.json.latest
+
+# Block download workspaces (avoids pushing gigabytes of images to GitHub)
+_OUT/
+_OUT\
+
+# Block compilation and runtime debris
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdf
+.ipynb_checkpoints/
+
+# Block OS specific layout parameters
+Thumbs.db
+ehthumbs.db
+Desktop.ini
