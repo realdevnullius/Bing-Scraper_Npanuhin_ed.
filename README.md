@@ -70,10 +70,13 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 1\. Clone or download this repository into your target installation folder (e.g., `C:\_BingBackgrounds.py\anerg.com.py\`).
 
-2\. Double-click \*\*`run.cmd`\*\*. This automated batch layer will instantly verify your Python environment, install required library dependencies (`requests`, `piexif`, `Pillow`), correct working directory scopes, and launch the multi-threaded connection worker pool.
+2\. Edit \*\*`1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py`\*\* and \*\*`2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py files`\*\*.
 
-3\. Once completed, your `\_OUT` directory will be fully synchronized with metadata-enriched 4K wallpaper assets.
+3\. Double-click \*\*`run.cmd`\*\*. This automated batch layer will instantly verify your Python environment, install required library dependencies (`requests`, `piexif`, `Pillow`), correct working directory scopes, and launch the multi-threaded connection worker pool.
 
+4\. Once completed, your `\_OUT` directory will be fully synchronized with metadata-enriched 4K wallpaper assets.
+
+5\. Instead of the \*\*`run.cmd`\*\*, you can also run the two .py scripts from (2) directly.  
 
 
 \## 📄 License
