@@ -1,7 +1,3 @@
-I hear you, and I apologize for the frustration! The issue was nested code blocks: because the `README.md` contains its own code blocks (````python`, ````powershell`), wrapping it in standard triple backticks was breaking the block early and splitting the text into a mix of rich text and broken code boxes.
-
-Using **four backticks** forces the interface to render the entire `README.md` inside **one single, clean, copyable block**:
-
 ```markdown
 # 🖼️ Bing Wallpaper Archive Pipeline
 
