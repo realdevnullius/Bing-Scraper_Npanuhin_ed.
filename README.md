@@ -14,22 +14,22 @@ hard-injects Windows Shell-compatible EXIF/IPTC metadata into every asset.
 ## 📸 Key Features
 
 * **🌍 Worldwide Cross-Region Deduplication:** Evaluates regional Bing markets (`US`, `UK`, `DE`,
- `FR`, `JA`, `AU`, `CN`, `CA`, `IN`, `BR`, `ROW`) in RAM to ensure duplicate global images are
- downloaded exactly once.
+`FR`, `JA`, `AU`, `CN`, `CA`, `IN`, `BR`, `ROW`) in RAM to ensure duplicate global images are
+downloaded exactly once.
 * **⚡ Dual Execution Engines:**
-  * **Multi-Threaded Engine:** Uses `ThreadPoolExecutor` TCP multiplexing for speed (5x–15x
-  throughput gains).
-  * **Single-Threaded Engine:** Strict sequential ingestion for connection stability on low-bandwidth
-  networks or strict firewalls.
+* **Multi-Threaded Engine:** Uses `ThreadPoolExecutor` TCP multiplexing for speed (5x–15x
+throughput gains).
+* **Single-Threaded Engine:** Strict sequential ingestion for connection stability on low-bandwidth
+networks or strict firewalls.
 * **🎯 Unicode & CJK Script Preservation:** Prevents descriptive international filenames (Chinese,
- Japanese, Korean, German, etc.) from being overwritten with generic fallback strings.
+Japanese, Korean, German, etc.) from being overwritten with generic fallback strings.
 * **✨ Automatic 4K Ultra HD Upgrading:** Dynamically rewrites standard high-definition asset URLs 
 to target Ultra HD (`_UHD.jpg`) streams on Bing's CDNs.
 * **🏷️ Windows Explorer Metadata Injection:** Directly writes native `EXIF/IPTC` metadata tags using
- UTF-16LE Byte Order Mark (BOM) encoding. Windows Explorer reads image titles, descriptions, and
- copyrights natively in File Explorer properties.
+UTF-16LE Byte Order Mark (BOM) encoding. Windows Explorer reads image titles, descriptions, and
+copyrights natively in File Explorer properties.
 * **🔄 Flexible Directory Architecture:** Supports both structured `_OUT\YYYY\MM\filename.jpg` output
- and flat `_OUT\filename.jpg` storage via a simple global toggle.
+and flat `_OUT\filename.jpg` storage via a simple global toggle.
 * **🖼️ Background Switcher Ready:** Optimized for seamless integration with desktop wallpaper 
 rotation software, such as *John's Background Switcher*.
 
