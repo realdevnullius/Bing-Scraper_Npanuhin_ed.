@@ -46,11 +46,11 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 ├── 📄 2. grab\_everything\_multithreaded\_...py
 
-├── 📄 download\_npanuhin.me-all.json.py
+├── 📄 download\_npanuhin.me-all.json.py (optional: use when you only want to download all.json)
 
-├── 📄 test\_unicode.py
+├── 📄 test\_unicode.py (optional: do a quick test if path + file length is too large and how it handles Asian characters)
 
-├── 📄 run.cmd (One-Click Launcher)
+├── 📄 run.cmd (One-Click Launcher) (optional: installs dependencies then starts downloading with multithread)
 
 ├── 📄 requirements.txt (Dependencies)
 
