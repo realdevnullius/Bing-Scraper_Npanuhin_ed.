@@ -33,7 +33,19 @@ headers = {
 
 
 def sync_central_database():
+    CACHE_TTL_SECONDS = 5 * 3600  # 5 hours
+
     print(f"[*] Initialising remote database synchronization routine...")
+
+    # Check if local cache exists and is younger than 5 hours
+    if os.path.exists(LOCAL_JSON_PATH):
+        file_age = time.time() - os.path.getmtime(LOCAL_JSON_PATH)
+        if file_age < CACHE_TTL_SECONDS:
+            hours_old = file_age / 3600
+            print(f"[ ] Cache hit! 'all.json.latest' is {hours_old:.2f} hours old (< 5 hours). Skipping download. ⚡")
+            return True
+
+    print(f"[*] Cache expired or missing. Refreshing from endpoint...")
     print(f"[*] Target Endpoint: {JSON_URL}")
 
     api_headers = {
@@ -57,6 +69,9 @@ def sync_central_database():
             return False
     except Exception as e:
         print(f"[!] Critical network failure during database ingestion: {e}")
+        if os.path.exists(LOCAL_JSON_PATH):
+            print("[!] Falling back to existing local 'all.json.latest' file.")
+            return True
         return False
 
 
@@ -162,7 +177,7 @@ def download_single_wallpaper(task):
 
     # --- ACCURATE YYYY\MM PATH ROUTING ENGINE ---
     digits_only = re.sub(r'\D', '', str(date_str)) if date_str else ""
-    
+
     if len(digits_only) >= 6:
         year_str = digits_only[:4]
         month_str = digits_only[4:6]

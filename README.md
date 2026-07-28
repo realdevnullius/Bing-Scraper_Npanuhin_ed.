@@ -12,6 +12,7 @@ This pipeline syncs manifests across 11 worldwide regional endpoints, performs i
 * **⚡ Dual Execution Engines:**
   * **Multi-Threaded Engine:** Uses `ThreadPoolExecutor` TCP multiplexing for speed (5x–15x throughput gains).
   * **Single-Threaded Engine:** Strict sequential ingestion for connection stability on low-bandwidth networks or strict firewalls.
+* **⏱️ Smart 5-Hour Manifest Caching:** Checks local modification time of `all.json.latest` before fetching. Bypasses redundant network bandwidth if cached manifest is younger than 5 hours.
 * **🎯 Unicode & CJK Script Preservation:** Prevents descriptive international filenames (Chinese, Japanese, Korean, German, etc.) from being overwritten with generic fallback strings.
 * **✨ Automatic 4K Ultra HD Upgrading:** Dynamically rewrites standard high-definition asset URLs to target Ultra HD (`_UHD.jpg`) streams on Bing's CDNs.
 * **🏷️ Windows Explorer Metadata Injection:** Directly writes native `EXIF/IPTC` metadata tags using UTF-16LE Byte Order Mark (BOM) encoding. Windows Explorer reads image titles, descriptions, and copyrights natively in File Explorer properties.
@@ -27,6 +28,7 @@ This pipeline syncs manifests across 11 worldwide regional endpoints, performs i
 | **Execution Vector** | Sequential (1 asset at a time) | Concurrent (`ThreadPoolExecutor`) |
 | **Speed / Throughput** | Standard Network Throughput | ~max. 6x Speedup |
 | **Default Concurrency** | `1 worker` | `6 workers` (Hard Limit: Max 6) |
+| **Manifest Caching** | Skip download if file < 5 hrs old | Skip download if file < 5 hrs old |
 | **Graceful Shutdown** | Signal intercept + zero-byte cleanup | Signal intercept + `executor.shutdown()` |
 | **Best Used For** | Metered links, strict VPNs/proxies | Bulk archiving, high-speed initial runs |
 
@@ -47,7 +49,7 @@ This pipeline syncs manifests across 11 worldwide regional endpoints, performs i
 > **What `run.cmd` does automatically:**
 > * Checks your Python installation.
 > * Installs missing Python libraries (`requests`, `piexif`, `Pillow`).
-> * Synchronizes the central Bing manifest database (`all.json.latest`).
+> * Smart-checks the local Bing manifest database (`all.json.latest`); refreshes it only if older than 5 hours.
 > * Downloads and metadata-enriches all available wallpapers into the `_OUT` directory.
 
 ---
@@ -102,7 +104,7 @@ MAX_WORKERS = 6
 ├── 📄 2. grab_everything_multithreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py
 ├── 📄 run.cmd                  <-- One-Click Launcher script
 ├── 📄 requirements.txt          <-- Python dependencies list
-├── 📄 all.json.latest          <-- Auto-generated/cached Bing database manifest
+├── 📄 all.json.latest          <-- Auto-generated/cached Bing database manifest (5hr TTL)
 │
 └── 📁 _OUT/                    <-- Download workspace output target
     ├── 📁 2026/
@@ -116,31 +118,31 @@ MAX_WORKERS = 6
 ## 🔬 Architectural Mechanics & Fallback Flow
 
 ```text
-[ Remote JSON Manifest ] ---> [ In-Memory RAM Deduplication ]
-                                          │
-                                          ▼
-                            [ Concurrency ThreadPool ]
-                                          │
-                                          ▼
-                            [ Resolve 4K UHD Target URL ]
-                                          │
-                          ┌───────────────┴───────────────┐
-                          ▼                               ▼
-                 [ HTTP 200 Stream ]             [ Request Error / 404 ]
-                          │                               │
-                          ▼                               ▼
-                 [ Pillow Verification ]      [ 1080p HD Fallback Route ]
-                          │                               │
-                          └───────────────┬───────────────┘
-                                          │
-                                          ▼
-                                [ Inject EXIF/IPTC Metadata ]
-                                          │
-                                          ▼
-                               [ Save Asset to _OUT Workspace ]
+[ Remote JSON Manifest ] ---> [ 5-Hour Local Cache Check ] ---> [ In-Memory RAM Deduplication ]
+                                                                             │
+                                                                             ▼
+                                                               [ Concurrency ThreadPool ]
+                                                                             │
+                                                                             ▼
+                                                               [ Resolve 4K UHD Target URL ]
+                                                                             │
+                                                             ┌───────────────┴───────────────┐
+                                                             ▼                               ▼
+                                                    [ HTTP 200 Stream ]             [ Request Error / 404 ]
+                                                             │                               │
+                                                             ▼                               ▼
+                                                    [ Pillow Verification ]      [ 1080p HD Fallback Route ]
+                                                             │                               │
+                                                             └───────────────┬───────────────┘
+                                                                             │
+                                                                             ▼
+                                                                   [ Inject EXIF/IPTC Metadata ]
+                                                                             │
+                                                                             ▼
+                                                                  [ Save Asset to _OUT Workspace ]
 ```
 
-* **Manifest Ingestion:** Syncs the central database archive from [bing.npanuhin.me/all.json](https://bing.npanuhin.me/all.json).
+* **Manifest Ingestion & Caching:** Checks `all.json.latest` file age. If younger than 5 hours, it skips the network request. Otherwise, it syncs from [bing.npanuhin.me/all.json](https://bing.npanuhin.me/all.json).
 * **Deterministic Deduplication:** Extracts Microsoft market codes and asset IDs across 11 regional markets to append structured tags (e.g., `EN-US0450019921_UHD` or `ROW_HD`), preventing duplicate downloads across resolutions and legacy file schemes while preserving non-Latin CJK titles.
 * **Quality Upgrading:** Intercepts standard resolution strings and modifies the stream parameters to pull 4K UHD renditions (`&rf=LaDigue_UHD.jpg`).
 * **Binary Integrity Check:** Streamed bytes pass through PIL/Pillow (`Image.verify()`) to ensure no truncated or damaged JPEGs are written to disk. Incomplete downloads are immediately cleaned up on failure or interruption.
