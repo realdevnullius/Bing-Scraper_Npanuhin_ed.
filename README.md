@@ -76,7 +76,7 @@ The pipeline expects and maintains the following clean workspace directory taxon
 
 3\. Double-click \*\*`run.cmd`\*\*. This automated batch layer will instantly verify your Python environment, install required library dependencies (`requests`, `piexif`, `Pillow`), correct working directory scopes, and launch the multi-threaded connection worker pool.
 
-4\. Once completed, your `\_OUT` directory will be fully synchronized with metadata-enriched 4K wallpaper assets.
+4\. Once completed, your `\_OUT` directory will be fully synchronized with metadata-enriched 4K wallpaper assets (when they were available - e.g., 2010 had no 4k!).
 
 5\. Instead of the \*\*`run.cmd`\*\*, you can also run the two .py scripts from (2) directly.  Use: python.exe '.\1. grab_everything_singlethreaded_with_deduplication_and_automatic-npanuhin.me-all.json_download.py'
 
