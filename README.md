@@ -1,4 +1,4 @@
-# 🖼️ Bing Wallpaper Archive Pipeline
+# 🖼️ Bing Scraper, Npanuhin Edition. A Bing Wallpapers Archive Pipeline
 
 A robust, cross-region deduplicating downloader pipeline for the global **Bing Image of the Day** archive. Available in both **Single-Threaded (Sequential)** and **Multi-Threaded (Concurrent)** editions.
 
