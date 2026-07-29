@@ -5,16 +5,34 @@ import sys
 import re
 import requests
 import piexif
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
+
+# Enable Virtual Terminal Processing on Windows for ANSI escape sequences
+if sys.platform == "win32":
+    os.system('')
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ARCHITECTURAL PATH ROUTING STRATEGY:
 # False -> Persists assets inside structured hierarchical subdirectories (e.g., _OUT\2026\07\image.jpg)
 # True  -> Flattens the dependency graph and writes assets directly into root (e.g., _OUT\image.jpg)
+#
+# WHY / SENIOR ARCHITECT: B-Tree and inode structures in standard OS filesystems (NTFS, ext4) degrade 
+# during directory traversal once a single directory exceeds ~10,000 file descriptors. B-Tree rebalancing 
+# introduces noticeable I/O bottlenecks during concurrent file creation. Distributing writes across 
+# depth-2 hierarchical subdirectories (YYYY/MM) caps fan-out per node, maintaining O(log N) lookup time 
+# and eliminating directory lock contention at scale.
+#
+# HOW / JUNIOR DEV: Set to True if you want all downloaded wallpapers dropped into a single flat folder (_OUT).
+# Set to False to automatically sort them into year and month folders (e.g., _OUT/2026/07/).
 FLATTEN_OUTPUT = False
 
+# WHY / SENIOR ARCHITECT: Thread-pool size chosen to optimize throughput against remote HTTP/1.1 socket 
+# saturation and local thread context-switching overhead. Beyond 15-20 threads, TCP slow-start and network 
+# buffer contention yield diminishing returns, while incurring higher kernel thread overhead.
+# HOW / JUNIOR DEV: Controls how many image downloads happen simultaneously.
 MAX_WORKERS = 15
 JSON_URL = "https://bing.npanuhin.me/all.json"
 
@@ -29,12 +47,138 @@ REGIONS = {
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# WHY / SENIOR ARCHITECT: Modern HTTP Edge Gateways and CDNs enforce strict User-Agent inspection 
+# rules to eliminate generic crawler bots. Providing a deterministic desktop browser header bypasses 
+# 403 Forbidden edge drop policies without adding full browser automation overhead.
+# HOW / JUNIOR DEV: Headers sent with every HTTP request so Bing's server thinks we are a standard browser.
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 }
 
 
+class PipelineMonitor:
+    """
+    Thread-safe aggregated pipeline metrics tracker and dynamic terminal dashboard printer.
+    Aggregates results across all concurrent workers into a single live console display.
+    """
+    def __init__(self, total_tasks):
+        self.lock = threading.Lock()
+        self.total_tasks = total_tasks
+        self.processed = 0
+        self.skipped = 0
+        self.uhd_downloads = 0
+        self.hd_downloads = 0
+        self.failed = 0
+        self.total_bytes = 0
+        self.start_time = time.time()
+        self.recent_transfers = []  # List of (timestamp, bytes_downloaded)
+        self.rendered_lines = 0
+
+    def record_result(self, status_type, bytes_count=0):
+        with self.lock:
+            now = time.time()
+            self.processed += 1
+            if status_type == "SKIPPED":
+                self.skipped += 1
+            elif status_type == "UHD":
+                self.uhd_downloads += 1
+                self.total_bytes += bytes_count
+                self.recent_transfers.append((now, bytes_count))
+            elif status_type == "HD":
+                self.hd_downloads += 1
+                self.total_bytes += bytes_count
+                self.recent_transfers.append((now, bytes_count))
+            elif status_type == "FAILED":
+                self.failed += 1
+
+            # Keep rolling window of last 10 seconds for transfer speed calculation
+            cutoff = now - 10.0
+            self.recent_transfers = [t for t in self.recent_transfers if t[0] >= cutoff]
+
+            self.render_dashboard()
+
+    def render_dashboard(self):
+        elapsed = time.time() - self.start_time
+        downloaded_count = self.uhd_downloads + self.hd_downloads
+        
+        # Progress Bar calculation
+        percentage = (self.processed / self.total_tasks * 100) if self.total_tasks > 0 else 100.0
+        bar_length = 20
+        filled_len = int(bar_length * self.processed // self.total_tasks) if self.total_tasks > 0 else bar_length
+        bar = "=" * filled_len + (">" if filled_len < bar_length else "")
+        bar = bar.ljust(bar_length)
+
+        # ETA calculation
+        items_remaining = self.total_tasks - self.processed
+        rate = self.processed / elapsed if elapsed > 0 else 0
+        eta_seconds = int(items_remaining / rate) if rate > 0 else 0
+        eta_str = time.strftime("%H:%M:%S", time.gmtime(eta_seconds))
+        elapsed_str = time.strftime("%H:%M:%S", time.gmtime(int(elapsed)))
+
+        # Network speed calculation (rolling 10s window)
+        window_time = min(elapsed, 10.0)
+        recent_bytes = sum(b for t, b in self.recent_transfers)
+        recent_count = len(self.recent_transfers)
+        speed_mbps = (recent_bytes / (1024 * 1024)) / window_time if window_time > 0 else 0.0
+        speed_imgs = recent_count / window_time if window_time > 0 else 0.0
+
+        # Payload Metrics
+        total_mb = self.total_bytes / (1024 * 1024)
+        avg_mb = (total_mb / downloaded_count) if downloaded_count > 0 else 0.0
+
+        lines = [
+            f"[*] PROGRESS: [{bar}] {percentage:5.1f}% | {self.processed:,}/{self.total_tasks:,} items | ETA: {eta_str}",
+            "+------------------------------------------------------------------+",
+            "| REAL-TIME PIPELINE EXECUTION MONITOR                             |",
+            "+------------------------------------------------------------------+",
+            f"| Total Unique Items Processed : {self.processed:<35,}|",
+            f"| Already Up-to-Date (Skipped) : {self.skipped:<35,}|",
+            f"| New Wallpapers Downloaded    : {downloaded_count:<35,}|",
+            f"|   ├── New UHD (4K) Quality   : {self.uhd_downloads:<35,}|",
+            f"|   └── New HD Quality         : {self.hd_downloads:<35,}|",
+            f"| Failed / Unavailable Assets  : {self.failed:<35,}|",
+            f"| Total Payload Downloaded     : {total_mb:<32.2f} MB |",
+            f"| Average Image Payload Size   : {avg_mb:<32.2f} MB |",
+            f"| Current Network Speed        : {speed_mbps:<5.2f} MB/s ({speed_imgs:<2.0f} img/s)".ljust(67) + "|",
+            f"| Total Pipeline Execution Time: {elapsed_str:<35}|",
+            "+------------------------------------------------------------------+"
+        ]
+
+        # Rewind cursor to overwrite previous dashboard frame
+        if self.rendered_lines > 0:
+            sys.stdout.write(f"\033[{self.rendered_lines}F")
+
+        sys.stdout.write("\n".join(lines) + "\n")
+        sys.stdout.flush()
+        self.rendered_lines = len(lines)
+
+
+def print_ascii_banner():
+    banner = """
+================================================================================
+ ____  _               ____  
+|  _ \| | _ __   __ _ / ___|  ___ _ __ __ _ _ __   ___ _ __ 
+| |_) | | '_ \ / _` \___ \ / __| '__/ _` | '_ \ / _ \ '__|
+|  _ <| | | | | (_| |___) | (__| | | (_| | |_) |  __/ |   
+|____/|_|_| |_|\__, |____/ \___|_|  \__,_| .__/ \___|_|   
+               |___/                     |_|              
+               (Npanuhin Edition)
+================================================================================"""
+    print(banner)
+
+
 def sync_central_database():
+    """
+    Synchronizes local JSON state with upstream endpoint using an HTTP Time-To-Live (TTL) cache strategy.
+    
+    WHY / SENIOR ARCHITECT: Eliminates redundant WAN bandwidth utilization and protects upstream CDNs from 
+    thundering herd requests. Evaluates file modification timestamp (`mtime`) on disk prior to network 
+    handshake to preserve zero-IO network roundtrips. Implements graceful local cache degradation on 
+    upstream transport failure.
+    
+    HOW / JUNIOR DEV: Checks if 'all.json.latest' exists and is under 5 hours old. If so, reuses it.
+    If older or missing, downloads fresh data. If offline, falls back to local cache safely.
+    """
     CACHE_TTL_SECONDS = 5 * 3600  # 5 hours
 
     print(f"[*] Initialising remote database synchronization routine...")
@@ -78,16 +222,30 @@ def sync_central_database():
 
 
 def inject_metadata_iptc(file_path, title, description, copyright_text):
+    """
+    Direct binary EXIF header modification via low-level byte serialization.
+    
+    WHY / SENIOR ARCHITECT: Preserves digital provenance across media asset pipelines. Modifies 0th IFD 
+    tags in-place without re-encoding binary JPEG frame data (preventing generation loss and saving CPU cycles).
+    Encodes UTF-16LE specifically for Windows Shell/NTFS indexing metadata tags (0x9C9B, 0x9C9C) while maintaining 
+    standard UTF-8 byte arrays for cross-platform EXIF 2.2 tags (0x010E, 0x8298).
+    
+    HOW / JUNIOR DEV: Writes Title, Description, and Copyright info directly inside the JPEG image file 
+    properties using EXIF tags so Windows, Mac, and photo managers display the metadata.
+    """
     try:
         exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "1st": {}, "thumbnail": None}
 
+        # Tag 0x9C9B: XPTitle (Windows UTF-16LE), Tag 0x010E: ImageDescription (Standard EXIF UTF-8)
         if title:
             exif_dict["0th"][0x9c9b] = title.encode('utf-16le')
             exif_dict["0th"][0x010e] = title.encode('utf-8')
 
+        # Tag 0x9C9C: XPComment / Description (Windows UTF-16LE)
         if description:
             exif_dict["0th"][0x9c9c] = description.encode('utf-16le')
 
+        # Tag 0x8298: Copyright notice (Standard EXIF ASCII/UTF-8)
         if copyright_text:
             exif_dict["0th"][0x8298] = copyright_text.encode('utf-8')
 
@@ -100,6 +258,17 @@ def inject_metadata_iptc(file_path, title, description, copyright_text):
 
 
 def clean_title(title_str):
+    """
+    Sanitizes string inputs to comply with strict OS path constraints and ASCII/Unicode file system APIs.
+    
+    WHY / SENIOR ARCHITECT: Prevents path traversal vulnerabilities and invalid file descriptor creation across 
+    POSIX and Win32 subsystems by scrubbing reserved characters (`\ / : * ? " < > |`). Implements 
+    linguistic filtering to reduce token noise in long names, enforcing a strict 60-character ceiling to prevent 
+    exceeding legacy Win32 `MAX_PATH` (260 char) buffer limitations when nested deep in dynamic subdirectories.
+    
+    HOW / JUNIOR DEV: Strip out invalid file characters, remove clutter words like 'the' or 'in', 
+    capitalize words, and truncate to a max length of 60 characters for a clean file name.
+    """
     if not title_str:
         return "BingImage"
 
@@ -109,6 +278,7 @@ def clean_title(title_str):
         'under', 'above', 'during', 'without', 'against', 'including', 'across'
     }
 
+    # Scrub control chars, OS reserved path symbols, and CJK punctuation
     clean = re.sub(r'[\x00-\x1f\\/:*?"<>|,\. !?’’“” ]|，|。|！|＿|：', ' ', title_str)
     words = clean.split()
     filtered_words = [w.capitalize() if w.isascii() else w for w in words if w.lower() not in stop_words]
@@ -121,11 +291,22 @@ def clean_title(title_str):
 
 
 def load_local_json(path):
+    """
+    Reads JSON file with automatic recovery for truncated write operations.
+    
+    WHY / SENIOR ARCHITECT: Robust failure recovery for file I/O interruptions (e.g., process termination 
+    mid-write). If JSON termination tokens (`}` or `]`) were missing due to an unbuffered stream crash, 
+    it dynamically appends closing tags to preserve parsing without throwing fatal unhandled exceptions.
+    
+    HOW / JUNIOR DEV: Opens and parses 'all.json.latest'. If the file was corrupted or cut short mid-write, 
+    it attempts to repair the trailing JSON syntax automatically before failing.
+    """
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read().strip()
     try:
         return json.loads(content)
     except json.JSONDecodeError:
+        # Self-healing syntax patch for truncated streams
         if not content.endswith('}'):
             content += '}' if content.endswith(']') else ']}'
         try:
@@ -136,9 +317,14 @@ def load_local_json(path):
 
 def extract_ms_code(url, default_quality="HD"):
     """
-    Extracts Microsoft Bing market codes and asset IDs.
-    Normalizes all resolution strings (\d+x\d+) to either 'UHD' or 'HD',
-    completely removing dimension numbers like 1920x1080 from filenames.
+    Extracts Microsoft Bing market codes and unique asset IDs from asset URIs.
+    
+    WHY / SENIOR ARCHITECT: Parses Bing's internal URL schema to derive a canonical asset fingerprint. 
+    Decouples raw dimensional resolution markers (e.g., `1920x1080`) from asset names, mapping them strictly 
+    to high-level semantic tags (`UHD` vs `HD`) while preserving market specificity (`EN-US`, `DE-DE`, etc.).
+    
+    HOW / JUNIOR DEV: Reads the URL to pull out regional market codes (like EN-US or DE-DE) and tags the name 
+    with 'UHD' or 'HD', removing resolution numbers like 1920x1080 from the filename.
     """
     if not url:
         return default_quality
@@ -175,6 +361,23 @@ def extract_ms_code(url, default_quality="HD"):
 
 
 def download_single_wallpaper(task):
+    """
+    Atomic execution unit for concurrent image acquisition, validation, and metadata processing.
+    
+    WHY / SENIOR ARCHITECT: 
+    1. Zero-Lock Idempotency Check: Proactively checks local disk paths for existing payloads (UHD, HD, legacy) 
+       *prior* to initiating network sockets, preserving I/O bandwidth.
+    2. Streamed Memory Buffer: Uses chunked streaming writes (`64KB` buffer) to keep process RAM flat, 
+       preventing memory spikes regardless of image file size.
+    3. Defensive Verification: Employs `PIL.Image.verify()` to validate structural byte integrity (detecting 
+       partial TCP drops or HTTP 200 HTML error pages masquerading as JPEGs). Corrupted payloads are 
+       purged immediately.
+    4. Two-Tier Tiered Resolution Fallback: Tries 4K UHD endpoint first; falls back to 1080p HD if 4K fails.
+    
+    HOW / JUNIOR DEV: Takes a download task, determines the folder path, checks if we already downloaded 
+    it, fetches the 4K version (or falls back to HD), verifies the file isn't broken, injects EXIF metadata, 
+    and returns a status structure for dashboard aggregation.
+    """
     date_str, img_name, img_url, title, description, copyright_text = task
 
     # --- ACCURATE YYYY\MM PATH ROUTING ENGINE ---
@@ -246,8 +449,9 @@ def download_single_wallpaper(task):
     if (os.path.exists(uhd_file_path) and os.path.getsize(uhd_file_path) > 0) or \
        (os.path.exists(hd_file_path) and os.path.getsize(hd_file_path) > 0) or \
        (os.path.exists(legacy_file_path) and os.path.getsize(legacy_file_path) > 0):
-        return None
+        return ("SKIPPED", 0)
 
+    # Minor rate-limit buffer to prevent edge throttling
     time.sleep(0.2)
 
     try:
@@ -259,13 +463,13 @@ def download_single_wallpaper(task):
                     f.write(chunk)
 
             try:
-                if os.path.getsize(uhd_file_path) > 0:
+                file_size = os.path.getsize(uhd_file_path)
+                if file_size > 0:
                     with Image.open(uhd_file_path) as img:
                         img.verify()
 
-                    meta_status = inject_metadata_iptc(uhd_file_path, title, description, copyright_text)
-                    meta_tag = " + Metadata EXIF/IPTC" if meta_status else ""
-                    return f"[UHD Download] -> {log_path_display}{uhd_filename}{meta_tag}"
+                    inject_metadata_iptc(uhd_file_path, title, description, copyright_text)
+                    return ("UHD", file_size)
             except Exception:
                 if os.path.exists(uhd_file_path):
                     os.remove(uhd_file_path)
@@ -278,13 +482,13 @@ def download_single_wallpaper(task):
                     f.write(chunk)
 
             try:
-                if os.path.getsize(hd_file_path) > 0:
+                file_size = os.path.getsize(hd_file_path)
+                if file_size > 0:
                     with Image.open(hd_file_path) as img:
                         img.verify()
 
-                    meta_status = inject_metadata_iptc(hd_file_path, title, description, copyright_text)
-                    meta_tag = " + Metadata EXIF/IPTC" if meta_status else ""
-                    return f"[HD Fallback] -> {log_path_display}{hd_filename}{meta_tag}"
+                    inject_metadata_iptc(hd_file_path, title, description, copyright_text)
+                    return ("HD", file_size)
             except Exception:
                 if os.path.exists(hd_file_path):
                     os.remove(hd_file_path)
@@ -295,13 +499,34 @@ def download_single_wallpaper(task):
         if os.path.exists(hd_file_path):
             os.remove(hd_file_path)
 
-    return f"[Failed] -> {uhd_filename}"
+    return ("FAILED", 0)
 
 
 def main():
+    """
+    Primary Application Lifecycle Controller.
+    
+    WHY / SENIOR ARCHITECT:
+    1. Cross-Regional Ingestion & Merging: Aggregates localized metadata structures across 11 global regions 
+       into a unified memory graph.
+    2. Key Normalization & Collision Resolution: Normalizes string keys (`base_key`) to eliminate regional 
+       duplication of identical assets. When collisions occur, prioritizes records containing descriptive 
+       metadata over generic placeholders (`Wallpaper_...`), while preferring `US`/`UK` locale strings for naming.
+    3. Non-Blocking SIGINT Signal Trap: Wraps execution in explicit `KeyboardInterrupt` blocks that force an 
+       immediate, clean process exit via `os._exit(0)`, immediately terminating orphan worker threads without 
+       waiting for active socket timeouts.
+    
+    HOW / JUNIOR DEV: Triggers database sync, loops through all 11 world regions in the JSON file, removes 
+    duplicate images, generates clean filenames, sorts tasks chronologically, and executes parallel downloads 
+    across 15 threads with real-time dynamic dashboard display.
+    """
+    print_ascii_banner()
+    print("[*] Initialising Bing Wallpaper Synchroniser (Schema Engine)\n")
+
     sync_central_database()
     print("-" * 60)
 
+    print(f"[*] Reading local JSON database: {LOCAL_JSON_PATH}")
     if not os.path.exists(LOCAL_JSON_PATH):
         print(f"[!] CRITICAL ERROR: all.json.latest is missing!")
         return
@@ -311,8 +536,12 @@ def main():
         print(f"[!] CRITICAL ERROR: Could not parse all.json.latest!")
         return
 
+    total_entries = sum(len(entries) for entries in db.values() if isinstance(entries, list))
+    print(f"[+] Successfully loaded {total_entries} entries from database schema.")
+
     unique_wallpapers = {}
 
+    # Aggregation Loop: Iterates over geographical region definitions
     for short_name, json_key in REGIONS.items():
         actual_key = next((k for k in db.keys() if k.lower() == json_key.lower()), None)
         if not actual_key:
@@ -331,6 +560,7 @@ def main():
             if not img_url:
                 continue
 
+            # Extract canonical base key for cross-region deduplication
             base_key = None
             try:
                 if "id=OHR." in img_url:
@@ -349,6 +579,7 @@ def main():
                 if 'lanterfestival' in base_key:
                     base_key = base_key.replace('lanterfestival', 'lanternfestival')
 
+            # Synthesize descriptive title from available record fields
             img_name = None
             if title and title.strip():
                 img_name = clean_title(title)
@@ -357,6 +588,7 @@ def main():
             if not img_name and entry.get('name'):
                 img_name = entry.get('name')
 
+            # Fallback title parser: Splits camelCase or concatenated key strings into human-readable titles
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"]:
                 if base_key and not base_key.startswith("date_"):
                     working_name = base_key
@@ -389,6 +621,7 @@ def main():
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"] or len(img_name) < 3:
                 img_name = f"Wallpaper_{fallback_suffix}"
 
+            # Priority Deduplication Arbitrator
             if base_key not in unique_wallpapers:
                 unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
             else:
@@ -401,22 +634,25 @@ def main():
                 if (is_existing_generic and is_new_better) or (short_name in ['us', 'uk'] and is_new_better):
                     unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
 
+    # Sort queue descending by date (process latest wallpapers first)
     download_queue = list(unique_wallpapers.values())
     download_queue.sort(key=lambda x: x[0] if x[0] else "", reverse=True)
 
     total_tasks = len(download_queue)
-    print(f"[+] Deduplication complete! {total_tasks} TRULY WORLDWIDE UNIQUE images with metadata ready.")
-    print(f"[*] Multi-threading started with {MAX_WORKERS} concurrent connections...\n")
+    print(f"[+] Cross-date Latin-preferred deduplication complete: {total_tasks} unique download tasks queued.")
+    print(f"[*] ThreadPoolExecutor active ({MAX_WORKERS} parallel workers)... (Press Ctrl+C to interrupt)\n")
 
+    monitor = PipelineMonitor(total_tasks)
+
+    # Thread Pool Concurrency Engine
     try:
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {executor.submit(download_single_wallpaper, task): task for task in download_queue}
 
             try:
                 for future in as_completed(futures):
-                    result = future.result()
-                    if result:
-                        print(result)
+                    status_type, bytes_count = future.result()
+                    monitor.record_result(status_type, bytes_count)
             except KeyboardInterrupt:
                 print("\n[!] Ctrl+C detected! Emptying multi-threaded task queue...")
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -426,7 +662,7 @@ def main():
         print("\n[X] Script execution successfully aborted.")
         os._exit(0)
 
-    print(f"\n[ ] Outstanding! Archiving process complete 🎉\nin:\n{DOWNLOAD_DIR}")
+    print(f"\n\n[ ] Outstanding! Archiving process complete 🎉\nin:\n{DOWNLOAD_DIR}")
 
 
 if __name__ == "__main__":
