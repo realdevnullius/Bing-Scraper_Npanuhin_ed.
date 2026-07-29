@@ -1,7 +1,7 @@
 # ==============================================================================
 # BING WALLPAPER ARCHIVE PIPELINE (SINGLE-THREADED + REALTIME MONITOR)
 # ==============================================================================
-# SENIOR DEV (WHY):
+# THE WHY:
 #   This module serves as an idempotent, cross-region ingest engine for Bing's
 #   global image archive. It resolves local pathing, manages cache sync TTLs,
 #   deduplicates multi-market assets in RAM, enforces maximum available payload 
@@ -9,7 +9,7 @@
 #   UTF-16LE Byte Order Mark (BOM) encoded EXIF/IPTC tags into the final JPEGs.
 #   It incorporates an in-memory thread-safe visual dashboard for real-time telemetry.
 #
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   We import standard Python libraries along with extra utilities ('threading', 
 #   'requests', 'piexif', 'Pillow/PIL') to handle image downloads, file metadata, 
 #   terminal ANSI sequences, and a live updating progress dashboard.
@@ -25,19 +25,19 @@ import piexif
 import threading
 from PIL import Image
 
-# SENIOR DEV (WHY):
+# THE WHY:
 #   Enables Virtual Terminal Processing mode on Windows 10/11 consoles to properly 
 #   interpret VT100/ANSI cursor control escape codes (`\033[F`) for dynamic line rewriting.
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   Calling `os.system('')` tricks Windows command prompt into enabling colored/styled terminal output.
 if sys.platform == "win32":
     os.system('')
 
-# SENIOR DEV (WHY):
+# THE WHY:
 #   Anchor all file path calculations dynamically to the script's actual file system
 #   location rather than current working directory (CWD). This prevents broken paths
 #   when called via scheduled tasks, batch files, or relative shell invocation.
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   __file__ gets the current script file, abspath cleans it up, and dirname gives
 #   us the folder path where this script actually sits on the hard drive.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,11 +47,11 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # True  -> Flattens the dependency graph and writes assets directly into root (e.g., _OUT\image.jpg)
 FLATTEN_OUTPUT = False
 
-# SENIOR DEV (WHY):
+# THE WHY:
 #   The npanuhin/bing-wallpaper index aggregates daily endpoint telemetry across 11 regions.
 #   Targeting 'all.json' gives us a unified, normalized database manifest instead of issuing 
 #   hundreds of fragmented API calls to Microsoft Bing directly.
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   These variables store our target online database link, where we cache the file 
 #   locally ('all.json.latest'), and the main target folder ('_OUT') where images are saved.
 JSON_URL = "https://bing.npanuhin.me/all.json"
@@ -59,10 +59,10 @@ JSON_URL = "https://bing.npanuhin.me/all.json"
 LOCAL_JSON_PATH = os.path.join(SCRIPT_DIR, "all.json.latest")
 DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "_OUT")
 
-# SENIOR DEV (WHY):
+# THE WHY:
 #   Bing serves different daily wallpapers or localized title variants per market. 
 #   Mapping these keys standardizes cross-region scanning across Microsoft's regional hubs.
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   A dictionary connecting simple region names (like 'us', 'de') to their full
 #   Microsoft country-language locale keys (like 'US-en', 'DE-de').
 REGIONS = {
@@ -71,15 +71,15 @@ REGIONS = {
     'in': 'IN-en', 'br': 'BR-pt', 'row': 'ROW-en'
 }
 
-# SENIOR DEV (WHY):
+# THE WHY:
 #   Ensures destination workspace exists before any network socket open calls, avoiding I/O race conditions.
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   Creates the '_OUT' folder if it doesn't exist yet; 'exist_ok=True' prevents errors if it's already there.
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# SENIOR DEV (WHY):
+# THE WHY:
 #   Bypasses aggressive CDN edge rate-limiting/blocking targeting generic Python HTTP clients.
-# JUNIOR DEV (HOW):
+# THE HOW:
 #   A dictionary containing a modern Chrome browser string to make our network requests look like real user traffic.
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
@@ -88,12 +88,12 @@ headers = {
 
 class PipelineMonitor:
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Aggregates real-time execution statistics, byte throughput metrics, ETA projections,
       and dynamic UI framing. Employs ANSI cursor control sequence rewrites (`\033[{lines}F`) 
       to produce a zero-flicker terminal dashboard without full console screen clears.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Keeps track of total processed items, skipped items, UHD downloads, HD downloads, and bytes.
       2. Computes execution speed (MB/s and images/sec) using a rolling 10-second window.
       3. Draws a clean ASCII progress bar and execution table on screen, updating it line-by-line.
@@ -163,6 +163,10 @@ class PipelineMonitor:
         total_mb = self.total_bytes / (1024 * 1024)
         avg_mb = (total_mb / downloaded_count) if downloaded_count > 0 else 0.0
 
+        speed_str = f"{speed_mbps:.2f} MB/s ({speed_imgs:.0f} img/s)"
+        total_mb_str = f"{total_mb:.2f} MB"
+        avg_mb_str = f"{avg_mb:.2f} MB"
+
         lines = [
             f"[*] PROGRESS: [{bar}] {percentage:5.1f}% | {self.processed:,}/{self.total_tasks:,} items | ETA: {eta_str}",
             "+------------------------------------------------------------------+",
@@ -174,9 +178,9 @@ class PipelineMonitor:
             f"|   ├── New UHD (4K) Quality   : {self.uhd_downloads:<35,}|",
             f"|   └── New HD Quality         : {self.hd_downloads:<35,}|",
             f"| Failed / Unavailable Assets  : {self.failed:<35,}|",
-            f"| Total Payload Downloaded     : {total_mb:<32.2f} MB |",
-            f"| Average Image Payload Size   : {avg_mb:<32.2f} MB |",
-            f"| Current Network Speed        : {speed_mbps:<5.2f} MB/s ({speed_imgs:<2.0f} img/s)".ljust(67) + "|",
+            f"| Total Payload Downloaded     : {total_mb_str:<35}|",
+            f"| Average Image Payload Size   : {avg_mb_str:<35}|",
+            f"| Current Network Speed        : {speed_str:<35}|",
             f"| Total Pipeline Execution Time: {elapsed_str:<35}|",
             "+------------------------------------------------------------------+"
         ]
@@ -192,19 +196,19 @@ class PipelineMonitor:
 
 def print_ascii_banner():
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Renders standardized ASCII branding banner for console visual clarity.
-    JUNIOR DEV (HOW):
+    THE HOW:
       Prints the large multi-line 'Bing Backgrounds' text block on script start.
     """
     banner = """
 ================================================================================
- ____                   ____
-|  _ \ | _ __   __ _   / ___|  ___ _ __ __ _ _ __   ___ _ __
-| |_) | | '_ \ / _` |  \___ \ / __| '__/ _` | '_ \ / _ \ '__|
-|  _ <| | | | | (_| |   ___) | (__| | | (_| | |_) |  __/ |
-|____/|_|_| |_|\__, |  |____/ \___|_|  \__,_| .__/ \___|_|
-               |___/                        |_|
+ ____                    ____
+|  _ \ | _ __   __ _    / ___|  ___ _ __ __ _ _ __   ___ _ __
+| |_) | | '_ \ / _` |   \___ \ / __| '__/ _` | '_ \ / _ \ '__|
+|  _ <| | | | | (_| |    ___) | (__| | | (_| | |_) |  __/ |
+|____/|_|_| |_|\__, |   |____/ \___|_|  \__,_| .__/ \___|_|
+               |___/                         |_|
                (Npanuhin Edition - multi-threaded version)
 ================================================================================"""
     print(banner)
@@ -212,12 +216,12 @@ def print_ascii_banner():
 
 def sync_central_database():
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Manages remote manifest ingestion with a strict 5-hour Time-To-Live (TTL) cache.
       Prevents redundant egress bandwidth usage and CDN socket strain on frequent script execution.
       Includes graceful fallback to stale local database during network outages.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Checks if 'all.json.latest' exists locally.
       2. Measures its file age; if younger than 5 hours (18,000 seconds), skips network download.
       3. If missing or expired, downloads the remote JSON and writes it cleanly formatted to disk.
@@ -267,13 +271,13 @@ def sync_central_database():
 
 def inject_metadata_iptc(file_path, title, description, copyright_text):
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Injects image metadata directly into JPEG APP1 binary headers using EXIF/IPTC specs.
       Applies UTF-16LE Byte Order Mark (BOM) encoding to Windows XP specific tags (0x9c9b, 0x9c9c)
       and UTF-8 to standard tags (0x010e, 0x8298). This guarantees full native compatibility 
       with Windows Explorer properties, legacy DAM systems, and desktop wallpaper tools.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Builds a Python dictionary structured for EXIF tags.
       2. Converts title, description, and copyright strings into byte data with correct encodings.
       3. Uses 'piexif.dump()' to generate binary EXIF byte arrays.
@@ -302,13 +306,13 @@ def inject_metadata_iptc(file_path, title, description, copyright_text):
 
 def clean_title(title_str):
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Sanitizes descriptive text for cross-platform OS filename safety. Strips non-printable
       ASCII control codes and Windows illegal path characters (\ / : * ? " < > |). 
       Filters non-informational English stop-words to optimize character economy while preserving 
       full international CJK / Non-Latin UTF-8 script readability.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Returns 'BingImage' if text is empty.
       2. Uses regular expressions (re.sub) to replace bad filename characters with spaces.
       3. Splits words, removes common filler words (like 'the', 'in', 'on'), and capitalizes ASCII words.
@@ -336,12 +340,12 @@ def clean_title(title_str):
 
 def load_local_json(path):
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Handles fault-tolerant JSON payload reading. Mitigates potential issues with truncated
       or improperly terminated local JSON files by dynamically appending missing structural 
       closing brackets before throwing parsing failures.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Opens file using UTF-8 text encoding.
       2. Tries reading with standard 'json.loads()'.
       3. If JSON syntax is broken at EOF, attempts to append missing closing '}' or ']}' and retries.
@@ -365,12 +369,12 @@ def extract_ms_code(url, default_quality="HD"):
     Normalizes resolution tags to either 'UHD' or 'HD', stripping
     dimension metrics (e.g. 1920x1080) from final target names.
 
-    SENIOR DEV (WHY):
+    THE WHY:
       Parses Microsoft's unique asset key from Bing CDN query strings (e.g., OHR.GrandCanyon_EN-US12345).
       Appending normalized market tags (EN-US_UHD) directly to filenames ensures strict identity tracking
       and prevents collisions between localized renditions of identical images.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Strips out URL query params, keeping just the image key.
       2. Determines if URL string requests 'uhd' or standard 'hd'.
       3. Uses RegEx to match Market Codes + Asset IDs (like 'EN-US0450019921') or base region keys ('ROW').
@@ -412,14 +416,14 @@ def extract_ms_code(url, default_quality="HD"):
 
 def download_single_wallpaper(task):
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Core asset ingest unit. Performs URL manipulation to upgrade standard 1080p stream parameters
       to 4K Ultra HD endpoints (`_UHD.jpg`). Validates binary stream payload integrity using 
       Pillow's `Image.verify()` prior to writing EXIF metadata, cleaning up partial/corrupted byte
       streams on failure before trying standard HD fallback routes.
       Returns a tuple `(STATUS_TYPE, FILE_SIZE_BYTES)` consumed directly by the PipelineMonitor dashboard.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Unpacks task metadata (date, titles, URLs).
       2. Calculates target directory structure (`_OUT\YYYY\MM\` or flat `_OUT\`).
       3. Constructs 4K UHD URL target and HD Fallback URL target.
@@ -554,14 +558,14 @@ def download_single_wallpaper(task):
 
 def main():
     """
-    SENIOR DEV (WHY):
+    THE WHY:
       Main orchestrator loop. Displays ASCII banner, syncs central DB manifest, loads JSON into memory,
       and performs cross-region deduplication using extracted base keys in RAM.
       Prioritizes descriptive English titles (US/UK regions) over generic fallbacks.
       Instantiates PipelineMonitor to render live terminal execution progress statistics frame-by-frame 
       during sequential single-threaded asset processing.
 
-    JUNIOR DEV (HOW):
+    THE HOW:
       1. Displays ASCII header banner.
       2. Calls `sync_central_database()` to update JSON if needed.
       3. Reads local JSON database and counts total raw schema entries.
