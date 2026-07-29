@@ -1,3 +1,20 @@
+# ==============================================================================
+# BING WALLPAPER ARCHIVE PIPELINE (SINGLE-THREADED + REALTIME MONITOR)
+# ==============================================================================
+# SENIOR DEV (WHY):
+#   This module serves as an idempotent, cross-region ingest engine for Bing's
+#   global image archive. It resolves local pathing, manages cache sync TTLs,
+#   deduplicates multi-market assets in RAM, enforces maximum available payload 
+#   resolution (4K UHD over 1080p HD), verifies payload binary health, and writes 
+#   UTF-16LE Byte Order Mark (BOM) encoded EXIF/IPTC tags into the final JPEGs.
+#   It incorporates an in-memory thread-safe visual dashboard for real-time telemetry.
+#
+# JUNIOR DEV (HOW):
+#   We import standard Python libraries along with extra utilities ('threading', 
+#   'requests', 'piexif', 'Pillow/PIL') to handle image downloads, file metadata, 
+#   terminal ANSI sequences, and a live updating progress dashboard.
+# ==============================================================================
+
 import os
 import time
 import json
@@ -6,51 +23,64 @@ import re
 import requests
 import piexif
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 
-# Enable Virtual Terminal Processing on Windows for ANSI escape sequences
+# SENIOR DEV (WHY):
+#   Enables Virtual Terminal Processing mode on Windows 10/11 consoles to properly 
+#   interpret VT100/ANSI cursor control escape codes (`\033[F`) for dynamic line rewriting.
+# JUNIOR DEV (HOW):
+#   Calling `os.system('')` tricks Windows command prompt into enabling colored/styled terminal output.
 if sys.platform == "win32":
     os.system('')
 
+# SENIOR DEV (WHY):
+#   Anchor all file path calculations dynamically to the script's actual file system
+#   location rather than current working directory (CWD). This prevents broken paths
+#   when called via scheduled tasks, batch files, or relative shell invocation.
+# JUNIOR DEV (HOW):
+#   __file__ gets the current script file, abspath cleans it up, and dirname gives
+#   us the folder path where this script actually sits on the hard drive.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ARCHITECTURAL PATH ROUTING STRATEGY:
 # False -> Persists assets inside structured hierarchical subdirectories (e.g., _OUT\2026\07\image.jpg)
 # True  -> Flattens the dependency graph and writes assets directly into root (e.g., _OUT\image.jpg)
-#
-# WHY / SENIOR ARCHITECT: B-Tree and inode structures in standard OS filesystems (NTFS, ext4) degrade 
-# during directory traversal once a single directory exceeds ~10,000 file descriptors. B-Tree rebalancing 
-# introduces noticeable I/O bottlenecks during concurrent file creation. Distributing writes across 
-# depth-2 hierarchical subdirectories (YYYY/MM) caps fan-out per node, maintaining O(log N) lookup time 
-# and eliminating directory lock contention at scale.
-#
-# HOW / JUNIOR DEV: Set to True if you want all downloaded wallpapers dropped into a single flat folder (_OUT).
-# Set to False to automatically sort them into year and month folders (e.g., _OUT/2026/07/).
 FLATTEN_OUTPUT = False
 
-# WHY / SENIOR ARCHITECT: Thread-pool size chosen to optimize throughput against remote HTTP/1.1 socket 
-# saturation and local thread context-switching overhead. Beyond 15-20 threads, TCP slow-start and network 
-# buffer contention yield diminishing returns, while incurring higher kernel thread overhead.
-# HOW / JUNIOR DEV: Controls how many image downloads happen simultaneously.
-MAX_WORKERS = 15
+# SENIOR DEV (WHY):
+#   The npanuhin/bing-wallpaper index aggregates daily endpoint telemetry across 11 regions.
+#   Targeting 'all.json' gives us a unified, normalized database manifest instead of issuing 
+#   hundreds of fragmented API calls to Microsoft Bing directly.
+# JUNIOR DEV (HOW):
+#   These variables store our target online database link, where we cache the file 
+#   locally ('all.json.latest'), and the main target folder ('_OUT') where images are saved.
 JSON_URL = "https://bing.npanuhin.me/all.json"
 
 LOCAL_JSON_PATH = os.path.join(SCRIPT_DIR, "all.json.latest")
 DOWNLOAD_DIR = os.path.join(SCRIPT_DIR, "_OUT")
 
+# SENIOR DEV (WHY):
+#   Bing serves different daily wallpapers or localized title variants per market. 
+#   Mapping these keys standardizes cross-region scanning across Microsoft's regional hubs.
+# JUNIOR DEV (HOW):
+#   A dictionary connecting simple region names (like 'us', 'de') to their full
+#   Microsoft country-language locale keys (like 'US-en', 'DE-de').
 REGIONS = {
     'us': 'US-en', 'uk': 'GB-en', 'de': 'DE-de', 'fr': 'FR-fr',
     'ja': 'JP-ja', 'au': 'AU-en', 'cn': 'CN-zh', 'ca': 'CA-en',
     'in': 'IN-en', 'br': 'BR-pt', 'row': 'ROW-en'
 }
 
+# SENIOR DEV (WHY):
+#   Ensures destination workspace exists before any network socket open calls, avoiding I/O race conditions.
+# JUNIOR DEV (HOW):
+#   Creates the '_OUT' folder if it doesn't exist yet; 'exist_ok=True' prevents errors if it's already there.
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# WHY / SENIOR ARCHITECT: Modern HTTP Edge Gateways and CDNs enforce strict User-Agent inspection 
-# rules to eliminate generic crawler bots. Providing a deterministic desktop browser header bypasses 
-# 403 Forbidden edge drop policies without adding full browser automation overhead.
-# HOW / JUNIOR DEV: Headers sent with every HTTP request so Bing's server thinks we are a standard browser.
+# SENIOR DEV (WHY):
+#   Bypasses aggressive CDN edge rate-limiting/blocking targeting generic Python HTTP clients.
+# JUNIOR DEV (HOW):
+#   A dictionary containing a modern Chrome browser string to make our network requests look like real user traffic.
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 }
@@ -58,8 +88,15 @@ headers = {
 
 class PipelineMonitor:
     """
-    Thread-safe aggregated pipeline metrics tracker and dynamic terminal dashboard printer.
-    Aggregates results across all concurrent workers into a single live console display.
+    SENIOR DEV (WHY):
+      Aggregates real-time execution statistics, byte throughput metrics, ETA projections,
+      and dynamic UI framing. Employs ANSI cursor control sequence rewrites (`\033[{lines}F`) 
+      to produce a zero-flicker terminal dashboard without full console screen clears.
+
+    JUNIOR DEV (HOW):
+      1. Keeps track of total processed items, skipped items, UHD downloads, HD downloads, and bytes.
+      2. Computes execution speed (MB/s and images/sec) using a rolling 10-second window.
+      3. Draws a clean ASCII progress bar and execution table on screen, updating it line-by-line.
     """
     def __init__(self, total_tasks):
         self.lock = threading.Lock()
@@ -154,9 +191,15 @@ class PipelineMonitor:
 
 
 def print_ascii_banner():
+    """
+    SENIOR DEV (WHY):
+      Renders standardized ASCII branding banner for console visual clarity.
+    JUNIOR DEV (HOW):
+      Prints the large multi-line 'Bing Backgrounds' text block on script start.
+    """
     banner = """
 ================================================================================
- ____  _               ____  
+ ____  _                ____  
 |  _ \| | _ __   __ _ / ___|  ___ _ __ __ _ _ __   ___ _ __ 
 | |_) | | '_ \ / _` \___ \ / __| '__/ _` | '_ \ / _ \ '__|
 |  _ <| | | | | (_| |___) | (__| | | (_| | |_) |  __/ |   
@@ -169,15 +212,16 @@ def print_ascii_banner():
 
 def sync_central_database():
     """
-    Synchronizes local JSON state with upstream endpoint using an HTTP Time-To-Live (TTL) cache strategy.
-    
-    WHY / SENIOR ARCHITECT: Eliminates redundant WAN bandwidth utilization and protects upstream CDNs from 
-    thundering herd requests. Evaluates file modification timestamp (`mtime`) on disk prior to network 
-    handshake to preserve zero-IO network roundtrips. Implements graceful local cache degradation on 
-    upstream transport failure.
-    
-    HOW / JUNIOR DEV: Checks if 'all.json.latest' exists and is under 5 hours old. If so, reuses it.
-    If older or missing, downloads fresh data. If offline, falls back to local cache safely.
+    SENIOR DEV (WHY):
+      Manages remote manifest ingestion with a strict 5-hour Time-To-Live (TTL) cache.
+      Prevents redundant egress bandwidth usage and CDN socket strain on frequent script execution.
+      Includes graceful fallback to stale local database during network outages.
+
+    JUNIOR DEV (HOW):
+      1. Checks if 'all.json.latest' exists locally.
+      2. Measures its file age; if younger than 5 hours (18,000 seconds), skips network download.
+      3. If missing or expired, downloads the remote JSON and writes it cleanly formatted to disk.
+      4. If network fails, catches the error and reuses local JSON if available.
     """
     CACHE_TTL_SECONDS = 5 * 3600  # 5 hours
 
@@ -223,31 +267,30 @@ def sync_central_database():
 
 def inject_metadata_iptc(file_path, title, description, copyright_text):
     """
-    Direct binary EXIF header modification via low-level byte serialization.
-    
-    WHY / SENIOR ARCHITECT: Preserves digital provenance across media asset pipelines. Modifies 0th IFD 
-    tags in-place without re-encoding binary JPEG frame data (preventing generation loss and saving CPU cycles).
-    Encodes UTF-16LE specifically for Windows Shell/NTFS indexing metadata tags (0x9C9B, 0x9C9C) while maintaining 
-    standard UTF-8 byte arrays for cross-platform EXIF 2.2 tags (0x010E, 0x8298).
-    
-    HOW / JUNIOR DEV: Writes Title, Description, and Copyright info directly inside the JPEG image file 
-    properties using EXIF tags so Windows, Mac, and photo managers display the metadata.
+    SENIOR DEV (WHY):
+      Injects image metadata directly into JPEG APP1 binary headers using EXIF/IPTC specs.
+      Applies UTF-16LE Byte Order Mark (BOM) encoding to Windows XP specific tags (0x9c9b, 0x9c9c)
+      and UTF-8 to standard tags (0x010e, 0x8298). This guarantees full native compatibility 
+      with Windows Explorer properties, legacy DAM systems, and desktop wallpaper tools.
+
+    JUNIOR DEV (HOW):
+      1. Builds a Python dictionary structured for EXIF tags.
+      2. Converts title, description, and copyright strings into byte data with correct encodings.
+      3. Uses 'piexif.dump()' to generate binary EXIF byte arrays.
+      4. Writes these bytes directly into the downloaded JPEG file header.
     """
     try:
         exif_dict = {"0th": {}, "Exif": {}, "GPS": {}, "Interop": {}, "1st": {}, "thumbnail": None}
 
-        # Tag 0x9C9B: XPTitle (Windows UTF-16LE), Tag 0x010E: ImageDescription (Standard EXIF UTF-8)
         if title:
-            exif_dict["0th"][0x9c9b] = title.encode('utf-16le')
-            exif_dict["0th"][0x010e] = title.encode('utf-8')
+            exif_dict["0th"][0x9c9b] = title.encode('utf-16le')  # Windows XP Title
+            exif_dict["0th"][0x010e] = title.encode('utf-8')     # Standard Image Description
 
-        # Tag 0x9C9C: XPComment / Description (Windows UTF-16LE)
         if description:
-            exif_dict["0th"][0x9c9c] = description.encode('utf-16le')
+            exif_dict["0th"][0x9c9c] = description.encode('utf-16le')  # Windows XP Comment/Subject
 
-        # Tag 0x8298: Copyright notice (Standard EXIF ASCII/UTF-8)
         if copyright_text:
-            exif_dict["0th"][0x8298] = copyright_text.encode('utf-8')
+            exif_dict["0th"][0x8298] = copyright_text.encode('utf-8')   # Standard Copyright Tag
 
         exif_bytes = piexif.dump(exif_dict)
         piexif.insert(exif_bytes, file_path)
@@ -259,15 +302,17 @@ def inject_metadata_iptc(file_path, title, description, copyright_text):
 
 def clean_title(title_str):
     """
-    Sanitizes string inputs to comply with strict OS path constraints and ASCII/Unicode file system APIs.
-    
-    WHY / SENIOR ARCHITECT: Prevents path traversal vulnerabilities and invalid file descriptor creation across 
-    POSIX and Win32 subsystems by scrubbing reserved characters (`\ / : * ? " < > |`). Implements 
-    linguistic filtering to reduce token noise in long names, enforcing a strict 60-character ceiling to prevent 
-    exceeding legacy Win32 `MAX_PATH` (260 char) buffer limitations when nested deep in dynamic subdirectories.
-    
-    HOW / JUNIOR DEV: Strip out invalid file characters, remove clutter words like 'the' or 'in', 
-    capitalize words, and truncate to a max length of 60 characters for a clean file name.
+    SENIOR DEV (WHY):
+      Sanitizes descriptive text for cross-platform OS filename safety. Strips non-printable
+      ASCII control codes and Windows illegal path characters (\ / : * ? " < > |). 
+      Filters non-informational English stop-words to optimize character economy while preserving 
+      full international CJK / Non-Latin UTF-8 script readability.
+
+    JUNIOR DEV (HOW):
+      1. Returns 'BingImage' if text is empty.
+      2. Uses regular expressions (re.sub) to replace bad filename characters with spaces.
+      3. Splits words, removes common filler words (like 'the', 'in', 'on'), and capitalizes ASCII words.
+      4. Truncates final string length cleanly at max 60 characters.
     """
     if not title_str:
         return "BingImage"
@@ -278,7 +323,6 @@ def clean_title(title_str):
         'under', 'above', 'during', 'without', 'against', 'including', 'across'
     }
 
-    # Scrub control chars, OS reserved path symbols, and CJK punctuation
     clean = re.sub(r'[\x00-\x1f\\/:*?"<>|,\. !?’’“” ]|，|。|！|＿|：', ' ', title_str)
     words = clean.split()
     filtered_words = [w.capitalize() if w.isascii() else w for w in words if w.lower() not in stop_words]
@@ -292,21 +336,21 @@ def clean_title(title_str):
 
 def load_local_json(path):
     """
-    Reads JSON file with automatic recovery for truncated write operations.
-    
-    WHY / SENIOR ARCHITECT: Robust failure recovery for file I/O interruptions (e.g., process termination 
-    mid-write). If JSON termination tokens (`}` or `]`) were missing due to an unbuffered stream crash, 
-    it dynamically appends closing tags to preserve parsing without throwing fatal unhandled exceptions.
-    
-    HOW / JUNIOR DEV: Opens and parses 'all.json.latest'. If the file was corrupted or cut short mid-write, 
-    it attempts to repair the trailing JSON syntax automatically before failing.
+    SENIOR DEV (WHY):
+      Handles fault-tolerant JSON payload reading. Mitigates potential issues with truncated
+      or improperly terminated local JSON files by dynamically appending missing structural 
+      closing brackets before throwing parsing failures.
+
+    JUNIOR DEV (HOW):
+      1. Opens file using UTF-8 text encoding.
+      2. Tries reading with standard 'json.loads()'.
+      3. If JSON syntax is broken at EOF, attempts to append missing closing '}' or ']}' and retries.
     """
     with open(path, 'r', encoding='utf-8') as f:
         content = f.read().strip()
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        # Self-healing syntax patch for truncated streams
         if not content.endswith('}'):
             content += '}' if content.endswith(']') else ']}'
         try:
@@ -317,14 +361,20 @@ def load_local_json(path):
 
 def extract_ms_code(url, default_quality="HD"):
     """
-    Extracts Microsoft Bing market codes and unique asset IDs from asset URIs.
-    
-    WHY / SENIOR ARCHITECT: Parses Bing's internal URL schema to derive a canonical asset fingerprint. 
-    Decouples raw dimensional resolution markers (e.g., `1920x1080`) from asset names, mapping them strictly 
-    to high-level semantic tags (`UHD` vs `HD`) while preserving market specificity (`EN-US`, `DE-DE`, etc.).
-    
-    HOW / JUNIOR DEV: Reads the URL to pull out regional market codes (like EN-US or DE-DE) and tags the name 
-    with 'UHD' or 'HD', removing resolution numbers like 1920x1080 from the filename.
+    Extracts Microsoft Bing market codes and asset IDs.
+    Normalizes resolution tags to either 'UHD' or 'HD', stripping
+    dimension metrics (e.g. 1920x1080) from final target names.
+
+    SENIOR DEV (WHY):
+      Parses Microsoft's unique asset key from Bing CDN query strings (e.g., OHR.GrandCanyon_EN-US12345).
+      Appending normalized market tags (EN-US_UHD) directly to filenames ensures strict identity tracking
+      and prevents collisions between localized renditions of identical images.
+
+    JUNIOR DEV (HOW):
+      1. Strips out URL query params, keeping just the image key.
+      2. Determines if URL string requests 'uhd' or standard 'hd'.
+      3. Uses RegEx to match Market Codes + Asset IDs (like 'EN-US0450019921') or base region keys ('ROW').
+      4. Combines market ID with quality tag (e.g., 'EN-US0450019921_UHD').
     """
     if not url:
         return default_quality
@@ -356,27 +406,28 @@ def extract_ms_code(url, default_quality="HD"):
     if m:
         return f"{m.group(1)}_{quality_tag}"
 
-    # 3. Legacy Fallback (No market/asset ID) -> Returns just 'UHD' or 'HD'
+    # 3. Fallback -> Returns 'UHD' or 'HD'
     return quality_tag
 
 
 def download_single_wallpaper(task):
     """
-    Atomic execution unit for concurrent image acquisition, validation, and metadata processing.
-    
-    WHY / SENIOR ARCHITECT: 
-    1. Zero-Lock Idempotency Check: Proactively checks local disk paths for existing payloads (UHD, HD, legacy) 
-       *prior* to initiating network sockets, preserving I/O bandwidth.
-    2. Streamed Memory Buffer: Uses chunked streaming writes (`64KB` buffer) to keep process RAM flat, 
-       preventing memory spikes regardless of image file size.
-    3. Defensive Verification: Employs `PIL.Image.verify()` to validate structural byte integrity (detecting 
-       partial TCP drops or HTTP 200 HTML error pages masquerading as JPEGs). Corrupted payloads are 
-       purged immediately.
-    4. Two-Tier Tiered Resolution Fallback: Tries 4K UHD endpoint first; falls back to 1080p HD if 4K fails.
-    
-    HOW / JUNIOR DEV: Takes a download task, determines the folder path, checks if we already downloaded 
-    it, fetches the 4K version (or falls back to HD), verifies the file isn't broken, injects EXIF metadata, 
-    and returns a status structure for dashboard aggregation.
+    SENIOR DEV (WHY):
+      Core asset ingest unit. Performs URL manipulation to upgrade standard 1080p stream parameters
+      to 4K Ultra HD endpoints (`_UHD.jpg`). Validates binary stream payload integrity using 
+      Pillow's `Image.verify()` prior to writing EXIF metadata, cleaning up partial/corrupted byte
+      streams on failure before trying standard HD fallback routes.
+      Returns a tuple `(STATUS_TYPE, FILE_SIZE_BYTES)` consumed directly by the PipelineMonitor dashboard.
+
+    JUNIOR DEV (HOW):
+      1. Unpacks task metadata (date, titles, URLs).
+      2. Calculates target directory structure (`_OUT\YYYY\MM\` or flat `_OUT\`).
+      3. Constructs 4K UHD URL target and HD Fallback URL target.
+      4. Checks if target file already exists on disk (if found, returns ("SKIPPED", 0)).
+      5. Downloads 4K UHD image in binary chunks; verifies image health using Pillow (`Image.verify()`).
+      6. Injects metadata tags into image header, returning ("UHD", byte_size).
+      7. If 4K download fails, attempts fallback download of standard 1080p image, returning ("HD", byte_size).
+      8. Cleans up broken or 0-byte temporary files if network/disk errors occur and returns ("FAILED", 0).
     """
     date_str, img_name, img_url, title, description, copyright_text = task
 
@@ -441,18 +492,17 @@ def download_single_wallpaper(task):
     hd_filename = f"{date_prefix}_{img_name} ({hd_code}).jpg"
     hd_file_path = os.path.join(target_folder, hd_filename)
 
-    # Check for unparenthesized/legacy filenames to prevent duplicate downloads
+    # Legacy file format check to prevent duplicates
     legacy_filename = f"{date_prefix}_{img_name}.jpg"
     legacy_file_path = os.path.join(target_folder, legacy_filename)
 
-    # Skip download if file already exists on disk in any valid format
+    # Skip download if target file already exists in any valid naming scheme
     if (os.path.exists(uhd_file_path) and os.path.getsize(uhd_file_path) > 0) or \
        (os.path.exists(hd_file_path) and os.path.getsize(hd_file_path) > 0) or \
        (os.path.exists(legacy_file_path) and os.path.getsize(legacy_file_path) > 0):
         return ("SKIPPED", 0)
 
-    # Minor rate-limit buffer to prevent edge throttling
-    time.sleep(0.2)
+    time.sleep(0.1)
 
     try:
         # Attempt 1: 4K UHD Download
@@ -504,21 +554,24 @@ def download_single_wallpaper(task):
 
 def main():
     """
-    Primary Application Lifecycle Controller.
-    
-    WHY / SENIOR ARCHITECT:
-    1. Cross-Regional Ingestion & Merging: Aggregates localized metadata structures across 11 global regions 
-       into a unified memory graph.
-    2. Key Normalization & Collision Resolution: Normalizes string keys (`base_key`) to eliminate regional 
-       duplication of identical assets. When collisions occur, prioritizes records containing descriptive 
-       metadata over generic placeholders (`Wallpaper_...`), while preferring `US`/`UK` locale strings for naming.
-    3. Non-Blocking SIGINT Signal Trap: Wraps execution in explicit `KeyboardInterrupt` blocks that force an 
-       immediate, clean process exit via `os._exit(0)`, immediately terminating orphan worker threads without 
-       waiting for active socket timeouts.
-    
-    HOW / JUNIOR DEV: Triggers database sync, loops through all 11 world regions in the JSON file, removes 
-    duplicate images, generates clean filenames, sorts tasks chronologically, and executes parallel downloads 
-    across 15 threads with real-time dynamic dashboard display.
+    SENIOR DEV (WHY):
+      Main orchestrator loop. Displays ASCII banner, syncs central DB manifest, loads JSON into memory,
+      and performs cross-region deduplication using extracted base keys in RAM.
+      Prioritizes descriptive English titles (US/UK regions) over generic fallbacks.
+      Instantiates PipelineMonitor to render live terminal execution progress statistics frame-by-frame 
+      during sequential single-threaded asset processing.
+
+    JUNIOR DEV (HOW):
+      1. Displays ASCII header banner.
+      2. Calls `sync_central_database()` to update JSON if needed.
+      3. Reads local JSON database and counts total raw schema entries.
+      4. Iterates over all 11 regional keys in JSON ('US-en', 'GB-en', etc.).
+      5. Builds unique wallpaper entries dictionary `unique_wallpapers`.
+      6. Deduplicates: replaces generic image names if a better localized title is found.
+      7. Sorts task queue chronologically by date in descending order (newest first).
+      8. Initializes `PipelineMonitor(total_tasks)` and sequentially calls `download_single_wallpaper(task)` 
+         updating the monitor after every single image item.
+      9. Catches Ctrl+C (KeyboardInterrupt) to stop execution cleanly.
     """
     print_ascii_banner()
     print("[*] Initialising Bing Wallpaper Synchroniser (Schema Engine)\n")
@@ -541,7 +594,6 @@ def main():
 
     unique_wallpapers = {}
 
-    # Aggregation Loop: Iterates over geographical region definitions
     for short_name, json_key in REGIONS.items():
         actual_key = next((k for k in db.keys() if k.lower() == json_key.lower()), None)
         if not actual_key:
@@ -560,7 +612,6 @@ def main():
             if not img_url:
                 continue
 
-            # Extract canonical base key for cross-region deduplication
             base_key = None
             try:
                 if "id=OHR." in img_url:
@@ -579,7 +630,6 @@ def main():
                 if 'lanterfestival' in base_key:
                     base_key = base_key.replace('lanterfestival', 'lanternfestival')
 
-            # Synthesize descriptive title from available record fields
             img_name = None
             if title and title.strip():
                 img_name = clean_title(title)
@@ -588,7 +638,6 @@ def main():
             if not img_name and entry.get('name'):
                 img_name = entry.get('name')
 
-            # Fallback title parser: Splits camelCase or concatenated key strings into human-readable titles
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"]:
                 if base_key and not base_key.startswith("date_"):
                     working_name = base_key
@@ -621,46 +670,32 @@ def main():
             if not img_name or img_name.lower() in ["bingimage", "wallpaper", "image"] or len(img_name) < 3:
                 img_name = f"Wallpaper_{fallback_suffix}"
 
-            # Priority Deduplication Arbitrator
             if base_key not in unique_wallpapers:
                 unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
             else:
                 existing_task = unique_wallpapers[base_key]
                 existing_name = existing_task[1]
-
                 is_existing_generic = existing_name.lower().startswith("wallpaper_") or existing_name.lower().startswith("bingimage_")
                 is_new_better = not img_name.lower().startswith("wallpaper_") and not img_name.lower().startswith("bingimage_")
 
                 if (is_existing_generic and is_new_better) or (short_name in ['us', 'uk'] and is_new_better):
                     unique_wallpapers[base_key] = (date_str, img_name, img_url, title, description, copyright_text)
 
-    # Sort queue descending by date (process latest wallpapers first)
     download_queue = list(unique_wallpapers.values())
     download_queue.sort(key=lambda x: x[0] if x[0] else "", reverse=True)
 
     total_tasks = len(download_queue)
-    print(f"[+] Cross-date Latin-preferred deduplication complete: {total_tasks} unique download tasks queued.")
-    print(f"[*] ThreadPoolExecutor active ({MAX_WORKERS} parallel workers)... (Press Ctrl+C to interrupt)\n")
+    print(f"[+] Cross-date Latin-preferred deduplication complete: {total_tasks} unique download tasks queued.\n")
 
     monitor = PipelineMonitor(total_tasks)
 
-    # Thread Pool Concurrency Engine
     try:
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {executor.submit(download_single_wallpaper, task): task for task in download_queue}
-
-            try:
-                for future in as_completed(futures):
-                    status_type, bytes_count = future.result()
-                    monitor.record_result(status_type, bytes_count)
-            except KeyboardInterrupt:
-                print("\n[!] Ctrl+C detected! Emptying multi-threaded task queue...")
-                executor.shutdown(wait=False, cancel_futures=True)
-                os._exit(0)
-
+        for task in download_queue:
+            status_type, bytes_count = download_single_wallpaper(task)
+            monitor.record_result(status_type, bytes_count)
     except KeyboardInterrupt:
-        print("\n[X] Script execution successfully aborted.")
-        os._exit(0)
+        print("\n[!] Operation cancelled by user. Exiting gracefully...")
+        sys.exit(0)
 
     print(f"\n\n[ ] Outstanding! Archiving process complete 🎉\nin:\n{DOWNLOAD_DIR}")
 
